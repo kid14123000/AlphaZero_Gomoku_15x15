@@ -99,13 +99,25 @@ def main():
                   % (x['n'], '黑' if x['p'] == 1 else '白',
                      '%d,%d' % x['rc'], x['q'], x['v'], res, mark))
 
-        # 统计：该步执子方最终胜/负的情况里，Q 的符号各占多少
+        # 统计口径说明（别用「输方执子时 Q 应<0」来判符号，那个假设是错的）：
+        #   自对弈里输的一方多数是「自己走错了」，不是局面必败，
+        #   所以它在自己回合的 Q 完全可以是正的（搜索认为还有机会）。
+        # 真正能判符号的是「赢方的最后一步」—— 那一步落子即成五，必赢，
+        #   Q 必须显著为正；若为负，就是符号反了。
+        last = rows[-1] if rows else None
         pos_w = sum(1 for x in rows if x['p'] == winner and x['q'] > 0)
         all_w = sum(1 for x in rows if x['p'] == winner)
         pos_l = sum(1 for x in rows if x['p'] != winner and x['q'] > 0)
         all_l = sum(1 for x in rows if x['p'] != winner)
+        verdict = ''
+        if last and last['p'] == winner:
+            verdict = ('  ✅ 终局手符号正确' if last['q'] > 0
+                       else '  ❌ 终局手符号反了')
         print('  ── 全 %d 步：赢方执子时 Q>0 占 %d/%d；输方执子时 Q>0 占 %d/%d'
               % (len(rows), pos_w, all_w, pos_l, all_l))
+        print('  ── 最后一步（%s执子，落子即终局）Q=%+.4f%s'
+              % ('黑' if last and last['p'] == 1 else '白',
+                 last['q'] if last else 0.0, verdict))
     print('=' * 84)
 
 
