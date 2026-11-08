@@ -12,6 +12,7 @@ Pure stdlib, no dependencies. Run:
 Then open http://localhost:8770
 """
 import argparse
+import gzip
 import json
 import os
 import statistics
@@ -302,6 +303,16 @@ class Handler(BaseHTTPRequestHandler):
             body = body.encode('utf-8')
         self.send_response(code)
         self.send_header('Content-Type', ctype)
+        # gzip：看板 1 秒轮询一次，payload 已到 600KB+（3000 局时），
+        # 不压缩的话每秒白传 0.6MB，还会挤占训练进程的 CPU/IO。
+        # json 压缩率很高，实测 636KB → ~55KB。
+        accept = (self.headers.get('Accept-Encoding') or '')
+        if 'gzip' in accept.lower() and len(body) > 1024:
+            gz = gzip.compress(body, 6)
+            if len(gz) < len(body):
+                body = gz
+                self.send_header('Content-Encoding', 'gzip')
+                self.send_header('Vary', 'Accept-Encoding')
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()

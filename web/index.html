@@ -79,7 +79,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
 <div class="hdr">
   <button id="refreshBtn" onclick="tick(true)">🔄 手动刷新</button>
   <span style="font-size:.72rem;color:#475569" id="upd">—</span>
-  <span style="font-size:.72rem;color:#334155">· 每 5 秒自动刷新</span>
+  <span style="font-size:.72rem;color:#334155">· 每 1 秒自动刷新</span>
 </div>
 
 <div class="row kpirow">
@@ -679,7 +679,7 @@ async function tick(manual){
   }
 }
 tick();
-setInterval(() => tick(false), 5000);
+setInterval(() => tick(false), 1000);
 </script>
 </body>
 </html>
