@@ -112,6 +112,53 @@ def delete_position(name):
                 json.dump(d, f, ensure_ascii=False, indent=1)
 
 
+def _read_start_record(path=None):
+    """读 metrics.jsonl 里最后一条 start 记录（= 当前这轮的配置）。
+
+    续训会在同一个文件里追加新的 start，所以要取最后一条而不是第一条。
+    """
+    p = path or DEFAULT_LOG
+    last = None
+    try:
+        with open(p) as f:
+            for line in f:
+                if '"start"' not in line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if r.get('type') == 'start':
+                    last = r
+    except IOError:
+        pass
+    return last or {}
+
+
+def _sync_board_modules(path=None, start=None):
+    """把棋盘规格同步给依赖它的模块（white_open 的天元、combat 的 N/WIN）。
+
+    这些模块里都有写死的默认值（15×15 / 连 5），换盘面后必须显式覆盖，
+    否则 9×9 会按 15×15 解析：天元找错、边缘四连被误判成活四。
+    """
+    if start is None:
+        start = _read_start_record(path)
+    b = str((start or {}).get('board') or '')
+    if 'x' not in b:
+        return
+    try:
+        n = int(b.split('x')[0])
+        win = int((start or {}).get('n_in_row') or 5)
+    except (ValueError, TypeError):
+        return
+    white_open.set_board(n)
+    try:
+        import combat as _combat
+        _combat.set_board(n, win)
+    except Exception:                   # noqa: BLE001
+        pass
+
+
 def build_payload(path, window=20):
     recs = read_records(path)
     starts = [r for r in recs if r.get('type') == 'start']
@@ -213,13 +260,9 @@ def build_payload(path, window=20):
     grace = max(180.0, 3.0 * per_game) if per_game else 180.0
     running = (not finished) and stale is not None and stale < grace
 
-    # white_open 的天元坐标也要跟着棋盘走（9×9 是 (4,4)，15×15 是 (7,7)）
-    _b = str(start.get('board') or '')
-    if 'x' in _b:
-        try:
-            white_open.set_board(int(_b.split('x')[0]))
-        except ValueError:
-            pass
+    # white_open / combat 的棋盘参数也要跟着走
+    # （9×9 天元是 (4,4)、连子数是 5；combat 的 N/WIN 同样不能写死 15/5）
+    _sync_board_modules(start)
 
     # ---- eval series
     eval_pts = [{'batch': e['batch'], 'win_ratio': round(100.0 * e['win_ratio'], 2),
@@ -506,6 +549,9 @@ class Handler(BaseHTTPRequestHandler):
                 bucket = int((qs.get('bucket') or ['100'])[0])
             except ValueError:
                 bucket = 100
+            # 独立入口也要先同步棋盘参数：combat 的 N/WIN 不能停在默认 15/5，
+            # 否则直接访问本接口（没先走 /api/metrics）会按 15×15 算 9×9 的棋谱。
+            _sync_board_modules(self.log_path)
             r = _GAMES.combat_series(bucket=bucket)
             if r.get('computed_now'):
                 _GAMES.save_combat_cache()

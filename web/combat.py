@@ -24,6 +24,20 @@ N = 15
 WIN = 5
 
 
+def set_board(n, win=None):
+    """按当前棋盘的边长/连子数重设，必须在 analyze() 之前调用。
+
+    🚨 写死 N=15 在 9×9 上会误判「活四」：_makes_live_four 用 `0 <= c < N`
+       判断端口是否为空，(0,9) 在 9×9 里越界但当 N=15 时被当成合法空点，
+       于是右边缘的 4 连 (0,5)-(0,8) 被算成两端都空的活四。
+       后果：威胁点里混进棋盘外坐标（永远不会被落子），防守率分母被撑大 ⇒ 偏低。
+    """
+    global N, WIN
+    N = int(n)
+    if win:
+        WIN = int(win)
+
+
 def _cheb(r1, c1, r2, c2):
     return max(abs(r1 - r2), abs(c1 - c2))
 
