@@ -412,6 +412,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._err('棋谱不存在: idx=%s' % idx)
                 return
             g['ok'] = True
+            # 逐步数值（黑/白胜率）：对每一步落子前的局面跑一次干净前向。
+            # ?values=0 可跳过（列表里连续翻局时省时间；9×9 一局约 40ms）。
+            want = (qs.get('values') or ['1'])[0]
+            if want not in ('0', 'false', 'no'):
+                try:
+                    import engine
+                    g['values'] = engine.game_value_series(g.get('moves'))
+                except Exception as exc:      # noqa: BLE001  没权重时不影响棋谱浏览
+                    g['values'] = []
+                    g['values_error'] = str(exc)
             self._json(g)
             return
         if u.path == '/api/games/stats':

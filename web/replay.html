@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>棋谱回放 · 15×15 五子棋</title>
+<link rel="stylesheet" href="/static/gomoku.css">
+<script src="/static/chart.min.js"></script>
+<script src="/static/gomoku.js"></script>
+</head>
+<body>
+<h1>🗂 棋谱回放 <small>训练自对弈对局 · 逐步复盘</small></h1>
+<div class="sub">左边挑一局，右边按手逐步走。可以看最短的（速胜/速败）和最长的（缠斗），判断棋风变化。</div>
+
+<div class="wrap">
+  <!-- 回放棋盘 -->
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="board" class="board"></canvas>
+    </div>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="ctl" style="margin-bottom:8px">
+        <button class="tiny" onclick="gotoStep(0)">⏮</button>
+        <button class="tiny" onclick="stepBy(-1)">◀ 上一手</button>
+        <button class="tiny primary" id="playBtn" onclick="togglePlay()">▶ 自动播放</button>
+        <button class="tiny" onclick="stepBy(1)">下一手 ▶</button>
+        <button class="tiny" onclick="gotoStep(g ? g.moves.length : 0)">⏭</button>
+        <select id="speed" style="font-size:11.5px">
+          <option value="600">0.6 秒/手</option>
+          <option value="350" selected>0.35 秒/手</option>
+          <option value="180">0.18 秒/手</option>
+          <option value="80">0.08 秒/手</option>
+        </select>
+      </div>
+      <div class="ctl" style="margin-bottom:6px">
+        <input type="range" id="step" min="0" max="0" value="0" style="flex:1" oninput="gotoStep(+this.value)">
+        <b id="stepLabel" style="min-width:78px;text-align:right;font-variant-numeric:tabular-nums">— / —</b>
+      </div>
+      <div class="hint" style="margin:0">
+        键盘：<b>← →</b> 单手 · <b>空格</b> 播放/暂停 · <b>Home/End</b> 首/末手
+      </div>
+    </div>
+  </div>
+
+  <!-- 棋谱列表 -->
+  <div class="col-side">
+    <div class="status" id="status">正在加载棋谱…</div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">筛选</div>
+      <div class="ctl">
+        <label>胜方</label>
+        <select id="fWinner" onchange="reload(0)">
+          <option value="">全部</option>
+          <option value="1">⚫ 黑胜</option>
+          <option value="2">⚪ 白胜</option>
+          <option value="-1">和棋</option>
+        </select>
+        <label>排序</label>
+        <select id="fOrder" onchange="reload(0)">
+          <option value="batch_desc">最新在前</option>
+          <option value="batch_asc">最早在前</option>
+          <option value="len_asc">最短局在前</option>
+          <option value="len_desc">最长局在前</option>
+        </select>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <label>代数</label>
+        <input type="number" id="fMin" placeholder="从" style="width:78px">
+        <span style="color:#475569">–</span>
+        <input type="number" id="fMax" placeholder="到" style="width:78px">
+        <button class="tiny" onclick="reload(0)">应用</button>
+        <button class="tiny" onclick="clearFilter()">重置</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px;padding-bottom:6px">
+      <div class="card-title">对局列表 <span class="t2" id="listMeta"></span></div>
+      <div class="scroll" id="gameList" style="max-height:330px">
+        <div class="empty">加载中…</div>
+      </div>
+      <div class="ctl" style="margin:8px 0 0;justify-content:space-between">
+        <button class="tiny" id="prevBtn" onclick="pageBy(-1)">◀ 上一页</button>
+        <span class="hint" id="pageInfo" style="margin:0"></span>
+        <button class="tiny" id="nextBtn" onclick="pageBy(1)">下一页 ▶</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">本局信息</div>
+      <div id="gameInfo"><div class="empty">还没选局</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">落子记录 <span class="t2">点任意手可跳转</span></div>
+      <div class="history" id="moveList" style="max-height:150px">
+        <span class="hint">选一局后显示</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:12px">
+  <div class="chartcard" style="flex:1.3">
+    <div class="card-title">逐步胜率 <span class="t2">网络估值 · 落子前那一刻</span></div>
+    <div class="hint">蓝=黑胜率，橙=白胜率（同一条曲线的镜像）；竖线是当前手。50% 以上偏向谁就说明网络认为谁占优</div>
+    <div class="chartbox"><canvas id="c-value"></canvas></div>
+  </div>
+  <div class="card" style="flex:.7">
+    <div class="card-title">当前手 · 数值 <span class="t2" id="valMeta">选一局后显示</span></div>
+    <div id="valNow"><div class="empty">还没选局</div></div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:12px">
+  <div class="chartcard">
+    <div class="card-title">手数分布 <span class="t2">10 手一档 · 全部已存棋谱</span></div>
+    <div class="hint">左侧矮的是速胜/thrash 局，右侧拖尾是长局</div>
+    <div class="chartbox"><canvas id="c-hist"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">按代黑白胜率 <span class="t2" id="seriesMeta"></span></div>
+    <div class="hint">实盘落子结果（不是网络估值），和看板口径不同</div>
+    <div class="chartbox"><canvas id="c-series"></canvas></div>
+  </div>
+</div>
+
+<footer>
+  <span>数据源 <code>logs/games.jsonl</code></span>
+  <span id="statLine"></span>
+</footer>
+
+<script>
+renderNav('/replay');
+
+let g = null;                // 当前对局 {idx,batch,winner,len,moves:[[r,c]]}
+let cur = 0;                 // 已走手数
+let view = null;
+let playing = false;
+let timer = null;
+let page = 0;
+const LIMIT = 40;
+let total = 0;
+let histChart = null, seriesChart = null;
+let winLine = [];            // 获胜五连坐标
+
+init();
+
+async function init() {
+  await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
+  view = new BoardView($('board'), {showNumbers: true, hover: false});
+  loadStats();
+  reload(0);
+
+  document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); stepBy(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); stepBy(1); }
+    else if (e.key === ' ')     { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'Home')  { e.preventDefault(); gotoStep(0); }
+    else if (e.key === 'End')   { e.preventDefault(); gotoStep(g ? g.moves.length : 0); }
+  });
+}
+
+/* ── 列表 ── */
+function filterParams() {
+  const p = new URLSearchParams();
+  const w = $('fWinner').value;
+  if (w !== '') p.set('winner', w);
+  const lo = $('fMin').value, hi = $('fMax').value;
+  if (lo !== '') p.set('min_batch', lo);
+  if (hi !== '') p.set('max_batch', hi);
+  p.set('order', $('fOrder').value);
+  return p;
+}
+
+function clearFilter() {
+  $('fWinner').value = ''; $('fOrder').value = 'batch_desc';
+  $('fMin').value = ''; $('fMax').value = '';
+  reload(0);
+}
+
+async function reload(p) {
+  page = Math.max(0, p);
+  const params = filterParams();
+  params.set('offset', page * LIMIT);
+  params.set('limit', LIMIT);
+  try {
+    const d = await api('/api/games/list?' + params.toString());
+    total = d.total;
+    renderList(d.games);
+    const pages = Math.max(1, Math.ceil(total / LIMIT));
+    $('pageInfo').textContent = `第 ${page + 1} / ${pages} 页`;
+    $('prevBtn').disabled = page === 0;
+    $('nextBtn').disabled = page >= pages - 1;
+    $('listMeta').textContent = `${total} 局`;
+    showStatus(total
+      ? `共 <b>${total}</b> 局符合条件 · 点左侧任意一局开始回放`
+      : '没有符合条件的对局（检查代数范围）');
+  } catch (e) {
+    $('gameList').innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
+  }
+}
+
+function pageBy(d) {
+  const pages = Math.max(1, Math.ceil(total / LIMIT));
+  const np = Math.min(pages - 1, Math.max(0, page + d));
+  if (np !== page) reload(np);
+}
+
+function renderList(games) {
+  if (!games.length) { $('gameList').innerHTML = '<div class="empty">无数据</div>'; return; }
+  const rows = games.map(x => {
+    const w = x.winner === 1 ? '<span class="pill b">黑胜</span>'
+      : x.winner === 2 ? '<span class="pill w">白胜</span>'
+      : '<span class="pill n">和</span>';
+    const on = g && g.idx === x.idx ? ' style="background:#24324a"' : '';
+    return `<tr data-idx="${x.idx}"${on} onclick="openGame(${x.idx})" style="cursor:pointer">
+      <td>第 ${x.batch} 代</td><td>${w}</td><td>${x.len} 手</td></tr>`;
+  }).join('');
+  $('gameList').innerHTML = `<table><thead><tr><th>代数</th><th>结果</th><th>手数</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+/* ── 打开一局 ── */
+async function openGame(idx) {
+  stopPlay();
+  try {
+    const d = await api('/api/games/detail?idx=' + idx);
+    g = d;
+    cur = 0;
+    winLine = findWinLine(d.moves);
+    $('step').max = d.moves.length;
+    gotoStep(d.moves.length);   // 默认停在终局，方便一眼看结果
+    renderGameInfo();
+    renderMoveList();
+    renderValueChart();
+    renderValueNow(cur);
+    // 高亮当前行（用 data-idx 定位，别用 innerText 模糊匹配）
+    document.querySelectorAll('#gameList tbody tr').forEach(tr => {
+      tr.style.background = (+tr.dataset.idx === d.idx) ? '#24324a' : '';
+    });
+  } catch (e) {
+    showStatus(`<span class="warn">读取棋谱失败：${e.message}</span>`);
+  }
+}
+
+function findWinLine(moves) {
+  // 从最后一手往回看有没有五连（训练对局是合法终局，赢家一定是最后落子方）
+  if (!moves || moves.length < 9) return [];
+  const b = new Map();
+  moves.forEach(([r, c], i) => b.set(r + ',' + c, i % 2 === 0 ? 1 : 2));
+  const lastIdx = moves.length - 1;
+  const [lr, lc] = moves[lastIdx];
+  const p = lastIdx % 2 === 0 ? 1 : 2;
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr, dc] of dirs) {
+    const line = [[lr, lc]];
+    for (const s of [1, -1]) {
+      let nr = lr + dr * s, nc = lc + dc * s;
+      while (b.get(nr + ',' + nc) === p) {
+        line.push([nr, nc]);
+        nr += dr * s; nc += dc * s;
+      }
+    }
+    if (line.length >= 5) return line;
+  }
+  return [];
+}
+
+/* ── 步进 ── */
+function gotoStep(n) {
+  if (!g) return;
+  n = Math.max(0, Math.min(g.moves.length, n));
+  cur = n;
+  const stones = g.moves.slice(0, n).map(([r, c], i) => ({
+    r, c, p: i % 2 === 0 ? 1 : 2, n: i + 1,
+  }));
+  const last = n > 0 ? {r: g.moves[n - 1][0], c: g.moves[n - 1][1]} : null;
+  const marks = (n === g.moves.length && winLine.length)
+    ? winLine.map(([r, c]) => ({r, c, color: '#ef4444', width: 3, r_px: 17, label: ''}))
+    : [];
+  view.setState({stones, lastMove: last, marks, heat: null});
+  $('step').value = n;
+  $('stepLabel').textContent = `${n} / ${g.moves.length}`;
+  highlightMove(n);
+  renderGameInfo();     // 五连标注提示要跟着步数变
+  renderValueNow(n);    // 当前手的网络数值
+  markValueCursor(n);   // 曲线上的竖线跟着走
+}
+
+function stepBy(d) {
+  if (!g) return;
+  if (playing) stopPlay();
+  gotoStep(cur + d);
+}
+
+function togglePlay() {
+  if (!g) return;
+  if (playing) { stopPlay(); return; }
+  if (cur >= g.moves.length) gotoStep(0);
+  playing = true;
+  $('playBtn').textContent = '⏸ 暂停';
+  $('playBtn').classList.remove('primary');
+  tickPlay();
+}
+
+function tickPlay() {
+  if (!playing) return;
+  if (cur >= g.moves.length) { stopPlay(); return; }
+  gotoStep(cur + 1);
+  timer = setTimeout(tickPlay, +$('speed').value);
+}
+
+function stopPlay() {
+  playing = false;
+  clearTimeout(timer);
+  const b = $('playBtn');
+  if (b) { b.textContent = '▶ 自动播放'; b.classList.add('primary'); }
+}
+
+/* ── 信息面板 ── */
+function renderGameInfo() {
+  const w = g.winner === 1 ? '<span class="pill b">⚫ 黑胜</span>'
+    : g.winner === 2 ? '<span class="pill w">⚪ 白胜</span>'
+    : '<span class="pill n">和棋</span>';
+  const atEnd = cur >= g.moves.length;
+  const wl = !winLine.length ? '—'
+    : (atEnd ? '已标注（红圈）' : '走到末手才标注');
+  $('gameInfo').innerHTML = `
+    <div class="kv"><span>代数</span><span>第 ${g.batch} 代</span></div>
+    <div class="kv"><span>结果</span><span>${w}</span></div>
+    <div class="kv"><span>手数</span><span>${g.moves.length}</span></div>
+    <div class="kv"><span>获胜五连</span><span>${wl}</span></div>
+    <div class="kv"><span>首手</span><span>${g.moves[0] ? g.moves[0][0] + ',' + g.moves[0][1] : '—'}</span></div>
+    <div class="kv"><span>末手</span><span>${g.moves.length ? g.moves[g.moves.length-1].join(',') : '—'}</span></div>
+    ${combatRows(g.combat)}
+    <div class="ctl" style="margin:8px 0 0">
+      <button class="tiny" onclick="viewAsPosition()">📋 送到 MCTS / 前向页</button>
+    </div>`;
+}
+
+/** 单局战斗指标（后端 /api/games/detail 已带 combat 字段） */
+function combatRows(c) {
+  if (!c) return '';
+  const pct = v => (v === null || v === undefined) ? '—' : (v * 100).toFixed(1) + '%';
+  const col = (c.composite ?? 0) >= 40 ? '#4ade80'
+    : (c.composite ?? 0) >= 28 ? '#fbbf24' : '#f87171';
+  const defCol = (c.block ?? 0) >= 0.3 ? '#4ade80' : '#f87171';
+  return `
+    <div class="kv" style="border-top:1px solid #24324a;margin-top:5px;padding-top:5px">
+      <span>⚔ 激烈度</span>
+      <span style="color:${col}">${(c.composite ?? 0).toFixed(1)}</span></div>
+    <div class="kv"><span>🛡 防守</span>
+      <span style="color:${defCol}">${c.block_chances ? `${c.block_hits}/${c.block_chances}（${pct(c.block)}）` : '无该防机会'}</span></div>
+    <div class="kv"><span>接触率 / 贴身</span>
+      <span>${pct(c.contact)} / ${c.proximity === null ? '—' : c.proximity.toFixed(2)}</span></div>
+    <div class="kv"><span>区域共享</span><span>${pct(c.zone)}</span></div>`;
+}
+
+function renderMoveList() {
+  if (!g) return;
+  const vals = g.values || [];
+  $('moveList').innerHTML = g.moves.map(([r, c], i) => {
+    const dot = i % 2 === 0 ? '⚫' : '⚪';
+    const cls = i % 2 === 0 ? 'b' : 'w';
+    const v = vals[i];
+    // 每手后面挂一个黑胜率小数字，鼠标悬停看完整信息
+    const num = v && v.black_pct != null
+      ? ` <i style="font-style:normal;font-size:10.5px;color:#7d8ea6">${v.black_pct.toFixed(0)}%</i>`
+      : '';
+    const tip = v
+      ? `${v.black_pct.toFixed(1)}% / ${v.white_pct.toFixed(1)}%`
+        + (v.prior != null ? ` · 网络给这步 ${(v.prior * 100).toFixed(1)}%` : '')
+        + (v.is_best ? ' · 网络首选' : '')
+      : '';
+    return `<span class="${cls}" data-i="${i+1}" onclick="gotoStep(${i+1})" title="${tip}"
+      style="cursor:pointer;padding:0 2px">${dot}${r},${c}${num}</span>`;
+  }).join(' · ');
+}
+
+/* ── 逐步胜率 ── */
+let valChart = null;
+
+function renderValueChart() {
+  const vals = (g && g.values) || [];
+  const meta = $('valMeta');
+  if (meta) {
+    meta.textContent = vals.length
+      ? `${vals.length} 步 · 最高 ${Math.max(...vals.map(v => v.black_pct)).toFixed(0)}% / 最低 ${Math.min(...vals.map(v => v.black_pct)).toFixed(0)}%`
+      : (g ? '无数据' : '选一局后显示');
+  }
+  if (!vals.length) {
+    if (valChart) { valChart.destroy(); valChart = null; }
+    return;
+  }
+  const labels = vals.map(v => v.n);
+  const black = vals.map(v => v.black_pct);
+  const white = vals.map(v => v.white_pct);
+  const cursor = cur > 0 ? cur : null;
+  if (!valChart) {
+    valChart = new Chart($('c-value').getContext('2d'), {
+      type: 'line',
+      data: {labels, datasets: []},
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: {mode: 'index', intersect: false},
+        plugins: {
+          legend: {labels: {color: '#94a3b8', boxWidth: 10, font: {size: 10}}},
+          tooltip: {
+            backgroundColor: '#0f172a', borderColor: '#334155', borderWidth: 1,
+            titleColor: '#e2e8f0', bodyColor: '#94a3b8',
+            callbacks: {
+              title: it => `第 ${it[0].label} 手`,
+              label: it => `${it.dataset.label} ${it.parsed.y.toFixed(1)}%`,
+              afterBody: it => {
+                const v = vals[+it[0].label - 1];
+                if (!v) return '';
+                const extra = [];
+                if (v.prior != null) extra.push(`网络给这步概率 ${(v.prior * 100).toFixed(1)}%`);
+                if (v.net_best) extra.push(`网络首选 ${v.net_best[0]},${v.net_best[1]}`);
+                extra.push(v.is_best ? '✓ 实际下的就是网络首选' : '✗ 实际不是网络首选');
+                return extra;
+              },
+            },
+          },
+        },
+        scales: {
+          x: {ticks: {color: '#64748b', font: {size: 9}, maxTicksLimit: 12},
+              grid: {color: '#24324a'},
+              title: {display: true, text: '手数', color: '#475569', font: {size: 9}}},
+          y: {min: 0, max: 100,
+              ticks: {color: '#64748b', font: {size: 9}, maxTicksLimit: 6,
+                      callback: v => v + '%'},
+              grid: {color: '#24324a'}},
+        },
+      },
+    });
+  }
+  valChart.data.labels = labels;
+  valChart.data.datasets = [
+    {label: '黑胜率', data: black, borderColor: '#60a5fa', borderWidth: 2,
+     pointRadius: 0, pointHoverRadius: 4, tension: .25},
+    {label: '白胜率', data: white, borderColor: '#fbbf24', borderWidth: 1.4,
+     borderDash: [4, 3], pointRadius: 0, pointHoverRadius: 4, tension: .25},
+    // 50% 参考线 + 当前手竖线
+    {label: '五五开', data: labels.map(() => 50), borderColor: '#64748b',
+     borderWidth: 1, borderDash: [5, 4], pointRadius: 0, fill: false},
+    {label: '当前手', data: labels.map(n => (cursor && n === cursor ? 100 : null)),
+     borderColor: '#38bdf8', backgroundColor: '#38bdf8', borderWidth: 2,
+     pointRadius: 0, fill: false},
+  ];
+  valChart.update('none');
+}
+
+/** 当前手的详细数值面板 */
+function renderValueNow(n) {
+  const box = $('valNow');
+  if (!box) return;
+  const vals = (g && g.values) || [];
+  if (!vals.length) {
+    box.innerHTML = '<div class="empty">这一局没有数值（可能还没权重）</div>';
+    return;
+  }
+  if (!n) {
+    const f = vals[0];
+    box.innerHTML = `<div class="empty">开局 · 黑胜率 ${f.black_pct.toFixed(1)}%</div>`;
+    return;
+  }
+  const v = vals[n - 1];
+  if (!v) { box.innerHTML = '<div class="empty">—</div>'; return; }
+  const side = v.player === 1 ? '⚫ 黑' : '⚪ 白';
+  const lead = v.black_pct >= 50
+    ? `<span style="color:#60a5fa">黑领先 ${(v.black_pct - 50).toFixed(1)}</span>`
+    : `<span style="color:#fbbf24">白领先 ${(50 - v.black_pct).toFixed(1)}</span>`;
+  box.innerHTML = `
+    <div class="big" style="font-size:1.5rem">${v.black_pct.toFixed(1)}<span class="big-unit">% 黑胜率</span></div>
+    <div class="sub">白胜率 <b>${v.white_pct.toFixed(1)}%</b> · ${lead}</div>
+    <div class="sub">第 ${v.n} 手 ${side} 下在 <b>${v.r},${v.c}</b></div>
+    <div class="sub">网络给这步概率 <b>${v.prior == null ? '—' : (v.prior * 100).toFixed(1) + '%'}</b>
+      ${v.net_best ? ` · 网络首选 <b>${v.net_best[0]},${v.net_best[1]}</b>` : ''}</div>
+    <div class="sub">${v.is_best ? '<span style="color:#4ade80">✓ 就是网络的首选</span>'
+                                : '<span style="color:#fbbf24">✗ 不是网络首选</span>'}</div>`;
+}
+
+function markValueCursor(n) {
+  if (!valChart) return;
+  valChart.data.datasets[3].data = valChart.data.labels.map(x => (n && x === n ? 100 : null));
+  valChart.update('none');
+}
+
+function highlightMove(n) {
+  document.querySelectorAll('#moveList span').forEach(s => {
+    const on = +s.dataset.i === n;
+    s.style.background = on ? '#38bdf8' : '';
+    s.style.color = on ? '#0f172a' : '';
+    s.style.borderRadius = on ? '3px' : '';
+  });
+  const on = document.querySelector(`#moveList span[data-i="${n}"]`);
+  if (on) on.scrollIntoView({block: 'nearest'});
+}
+
+async function viewAsPosition() {
+  if (!g) return;
+  const moves = g.moves.slice(0, cur || g.moves.length);
+  try {
+    await api('/api/positions/save', {
+      name: `回放_第${g.batch}代_${moves.length}手`,
+      stones: moves.map(([r, c]) => ({r, c})),
+      note: `棋谱回放（idx=${g.idx}，${g.winner === 1 ? '黑胜' : g.winner === 2 ? '白胜' : '和'}）`,
+    });
+    showStatus(`已存档「回放_第${g.batch}代_${moves.length}手」— 去 MCTS / 网络前向页载入即可拆解`);
+  } catch (e) { alert('存档失败：' + e.message); }
+}
+
+/* ── 统计 ── */
+async function loadStats() {
+  try {
+    const d = await api('/api/games/stats?bucket=100');
+    if (!d.n) { $('statLine').textContent = '暂无棋谱（训练需带 --save-games）'; return; }
+    $('statLine').innerHTML =
+      `共 <b>${d.n}</b> 局 · 第 ${d.batch_min}–${d.batch_max} 代 · ` +
+      `黑 ${d.black} / 白 ${d.white} / 和 ${d.tie} · ` +
+      `手数 均 ${d.len_avg} 中位 ${d.len_median}`;
+
+    // 手数分布
+    const labels = d.hist.map(b => `${b.from}-${b.to}`);
+    const data = d.hist.map(b => b.n);
+    if (!histChart) {
+      histChart = new Chart($('c-hist').getContext('2d'), {
+        type: 'bar',
+        data: {labels, datasets: [{label: '局数', data,
+               backgroundColor: '#38bdf8', borderRadius: 3}]},
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          plugins: {legend: {display: false}},
+          scales: {
+            x: {ticks: {color: '#64748b', font: {size: 9}}, grid: {display: false},
+                title: {display: true, text: '手数区间', color: '#475569', font: {size: 9}}},
+            y: {ticks: {color: '#64748b', font: {size: 9}}, grid: {color: '#24324a'}},
+          },
+        },
+      });
+    } else {
+      histChart.data.labels = labels;
+      histChart.data.datasets[0].data = data;
+      histChart.update('none');
+    }
+
+    // 按代黑白胜率
+    const s = d.series || [];
+    $('seriesMeta').textContent = `每 ${d.bucket} 代一档`;
+    if (!seriesChart) {
+      seriesChart = new Chart($('c-series').getContext('2d'), {
+        type: 'line',
+        data: {datasets: []},
+        options: {
+          responsive: true, maintainAspectRatio: false, animation: false,
+          interaction: {mode: 'nearest', intersect: false},
+          plugins: {legend: {labels: {color: '#94a3b8', boxWidth: 10, font: {size: 10}}}},
+          scales: {
+            x: {type: 'linear', ticks: {color: '#64748b', font: {size: 9}},
+                grid: {color: '#24324a'},
+                title: {display: true, text: '代数', color: '#475569', font: {size: 9}}},
+            y: {min: 0, max: 100, ticks: {color: '#64748b', font: {size: 9},
+                callback: v => v + '%'}, grid: {color: '#24324a'},
+                title: {display: true, text: '胜率', color: '#475569', font: {size: 9}}},
+            y1: {position: 'right', min: 0, ticks: {color: '#64748b', font: {size: 9}},
+                 grid: {drawOnChartArea: false},
+                 title: {display: true, text: '手数中位', color: '#475569', font: {size: 9}}},
+          },
+        },
+      });
+    }
+    seriesChart.data.datasets = [
+      {label: '黑胜率', borderColor: '#60a5fa', backgroundColor: '#60a5fa22',
+       data: s.map(x => ({x: x.batch, y: x.black_wr})), borderWidth: 2,
+       tension: .25, pointRadius: 2, fill: false},
+      {label: '白胜率', borderColor: '#fbbf24', backgroundColor: '#fbbf2422',
+       data: s.map(x => ({x: x.batch, y: x.white_wr})), borderWidth: 2,
+       tension: .25, pointRadius: 2, fill: false},
+      // 手数是 9~95 的量级，必须走右轴，否则和 0~100% 挤在一起看不出东西
+      {label: '手数中位（右轴）', borderColor: '#64748b', borderDash: [4, 3],
+       data: s.map(x => ({x: x.batch, y: x.len_median})), borderWidth: 1.4,
+       pointRadius: 0, fill: false, yAxisID: 'y1'},
+    ];
+    seriesChart.update('none');
+  } catch (e) {
+    $('statLine').textContent = '统计加载失败：' + e.message;
+  }
+}
+
+function showStatus(html) { $('status').innerHTML = html; }
+</script>
+</body>
+</html>
