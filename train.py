@@ -59,7 +59,8 @@ class TrainPipeline():
                  save_games=None, gate_step=200, gate_max=1200,
                  rapfi_bin=None, rapfi_depth=2, rapfi_every=0, rapfi_games=4,
                  rapfi_who='absolute', eval_pure=0, value_target='z',
-                 dirichlet_eps=0.25, dirichlet_alpha=0.3):
+                 dirichlet_eps=0.25, dirichlet_alpha=0.3,
+                 temp_switch=0, temp_after=None):
         # params of the board and the game
         self.board_width = board_width
         self.board_height = board_height
@@ -72,6 +73,9 @@ class TrainPipeline():
         self.learn_rate = 2e-3
         self.lr_multiplier = 1.0  # adaptively adjust the learning rate based on KL
         self.temp = 1.0  # the temperature param
+        # 温度调度：手数 < temp_switch 用 temp，之后用 temp_after（None=不调度）
+        self.temp_switch = int(temp_switch)
+        self.temp_after = temp_after
         self.n_playout = n_playout  # num of simulations for each move
         self.c_puct = 5
         self.buffer_size = 10000
@@ -219,12 +223,14 @@ class TrainPipeline():
         last_winner = -1
         for i in range(n_games):
             if self.value_target == 'z':
-                winner, play_data = self.game.start_self_play(self.mcts_player,
-                                                              temp=self.temp)
+                winner, play_data = self.game.start_self_play(
+                    self.mcts_player, temp=self.temp,
+                    temp_switch=self.temp_switch, temp_after=self.temp_after)
                 q_list = None
             else:
                 winner, play_data, q_list = self.game.start_self_play(
-                    self.mcts_player, temp=self.temp, collect_q=True)
+                    self.mcts_player, temp=self.temp, collect_q=True,
+                    temp_switch=self.temp_switch, temp_after=self.temp_after)
             play_data = list(play_data)[:]
             self.episode_len = len(play_data)
 
@@ -481,6 +487,9 @@ if __name__ == '__main__':
     parser.add_argument('--dirichlet_eps', type=float, default=0.25,
                         help='自我对弈探索噪声 ε（上游 0.25；9×9 短局建议 0.10）')
     parser.add_argument('--dirichlet_alpha', type=float, default=0.3)
+    parser.add_argument('--temp_switch', type=int, default=0,
+                        help='前 N 手用 --temp，之后切 --temp_after（0=不调度）')
+    parser.add_argument('--temp_after', type=float, default=None)
     parser.add_argument('--game_batch_num', type=int, default=1500)
     parser.add_argument('--check_freq', type=int, default=50)
     parser.add_argument('--play_batch_size', type=int, default=1)
@@ -550,5 +559,7 @@ if __name__ == '__main__':
                                       init_lr_multiplier=args.init_lr_multiplier,
                                       ckpt_dir=args.ckpt_dir,
                                       dirichlet_eps=args.dirichlet_eps,
-                                      dirichlet_alpha=args.dirichlet_alpha)
+                                      dirichlet_alpha=args.dirichlet_alpha,
+                                      temp_switch=args.temp_switch,
+                                      temp_after=args.temp_after)
     training_pipeline.run()

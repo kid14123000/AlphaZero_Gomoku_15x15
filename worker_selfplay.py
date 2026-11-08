@@ -53,6 +53,10 @@ def main():
     ap.add_argument('--dirichlet_eps', type=float, default=0.25,
                     help='自我对弈探索噪声权重 ε；上游 0.25，短局建议 0.10')
     ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
+    ap.add_argument('--temp_switch', type=int, default=0,
+                    help='前 N 手用 --temp 的温度，之后切 --temp_after（0=不调度，全程 temp）')
+    ap.add_argument('--temp_after', type=float, default=None,
+                    help='temp_switch 之后的温度，如 0.01 ≈ argmax')
     ap.add_argument('--device', default='cuda')
     ap.add_argument('--noise', type=float, default=0.0,
                     help='>0 时把每个 worker 的探索噪声强度错开（暂不使用）')
@@ -98,10 +102,12 @@ def main():
     board = Board(width=args.board, height=args.board, n_in_row=args.n_in_row)
     game = Game(board)
 
-    print('[w%d] 就绪  device=%s  par=%s  ver=%d  sims=%d  eps=%.2f  alpha=%.2f'
+    print('[w%d] 就绪  device=%s  par=%s  ver=%d  sims=%d  eps=%.2f  alpha=%.2f  temp=%s/%s@%d'
           % (wid, 'cuda' if use_gpu else 'cpu',
              format(sum(p.numel() for p in net.policy_value_net.parameters()), ','),
-             cur_ver, args.n_playout, args.dirichlet_eps, args.dirichlet_alpha),
+             cur_ver, args.n_playout, args.dirichlet_eps, args.dirichlet_alpha,
+             args.temp, args.temp_after if args.temp_after is not None else '-',
+             args.temp_switch),
           flush=True)
 
     seq = 0
@@ -126,7 +132,8 @@ def main():
             # 总是收集每步 MCTS 根 Q：主进程按 --value_target 决定用 z 还是 q，
             # worker 侧不重复跑一遍，代价只是多存一个 float 数组。
             winner, play_data, qs = game.start_self_play(
-                player, temp=args.temp, collect_q=True)
+                player, temp=args.temp, collect_q=True,
+                temp_switch=args.temp_switch, temp_after=args.temp_after)
         except RuntimeError as e:           # 显存/驱动偶发
             print('[w%d] 对局异常: %s' % (wid, e), flush=True)
             time.sleep(5)

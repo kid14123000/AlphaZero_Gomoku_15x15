@@ -163,7 +163,17 @@ class MCTS(object):
         act_visits = [(act, node._n_visits)
                       for act, node in self._root._children.items()]
         acts, visits = zip(*act_visits)
-        act_probs = softmax(1.0/temp * np.log(np.array(visits) + 1e-10))
+        v = np.array(visits, dtype=np.float64)
+        act_probs = softmax(1.0/temp * np.log(v + 1e-10))
+
+        # 🚨 训练标签必须和落子温度解耦：
+        #    落子可以用 temp 调度（前几手 1.0 探索，之后 0.01 近似 argmax），
+        #    但存进训练数据的 π 永远是「访问数归一化」，不含温度。
+        #    否则 temp=0.01 时标签退化成 one-hot，policy 头就学不到
+        #    「哪些点也不错」这种软信息，只剩「只有一个点是对的」的硬标签。
+        #    temp=1.0 时 softmax(log(visits)) 恰好等于 visits/sum，所以这样写
+        #    对原有行为零影响（向后兼容）。
+        self.last_label = v / max(v.sum(), 1e-12)
 
         return acts, act_probs
 
@@ -209,7 +219,9 @@ class MCTSPlayer(object):
         move_probs = np.zeros(board.width*board.height)
         if len(sensible_moves) > 0:
             acts, probs = self.mcts.get_move_probs(board, temp)
-            move_probs[list(acts)] = probs
+            # 训练标签用不含温度的访问分布（last_label），落子用带温度的 probs。
+            # 温度只影响「怎么选」，不该影响「学什么」。
+            move_probs[list(acts)] = getattr(self.mcts, 'last_label', probs)
             if self._is_selfplay:
                 # add Dirichlet Noise for exploration (needed for
                 # self-play training)。ε/α 由构造参数决定，默认保持上游 0.25/0.3。

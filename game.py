@@ -187,9 +187,15 @@ class Game(object):
                         print("Game end. Tie")
                 return winner
 
-    def start_self_play(self, player, is_shown=0, temp=1e-3, collect_q=False):
-        """ start a self-play game using a MCTS player, reuse the search tree,
-        and store the self-play data: (state, mcts_probs, z) for training
+    def start_self_play(self, player, is_shown=0, temp=1e-3, collect_q=False,
+                        temp_switch=0, temp_after=None):
+        """ start_self_play using MCTS player, reuse the search tree,
+        and store the self-play data: (state, mcts_probs, z)
+
+        temp_switch / temp_after: 温度调度。已走手数 < temp_switch 时用 temp，
+        之后用 temp_after。9×9 五连用小调度（前 3 手 1.0、之后 0.01）：
+        开局保留多样性，中盘近似 argmax 不再掷骰子。
+        🚨 温度只影响落子，训练标签由 get_move_probs 的 last_label 提供（不含温度）。
 
         collect_q=True 时额外收集每步 MCTS 根节点的 Q（执子方视角的搜索价值），
         用作 value 头的软标签 —— 最终胜负 ±1 同一局面只有一个答案，
@@ -200,8 +206,13 @@ class Game(object):
         states, mcts_probs, current_players = [], [], []
         qs = [] if collect_q else None
         while True:
+            # 温度调度：已走手数（len(states)）还没到 temp_switch 就用 temp 探索，
+            # 之后切成 temp_after（近似 argmax）。第 4 手时 len(states)==3 已达标。
+            _t = temp
+            if temp_after is not None and len(states) >= temp_switch:
+                _t = temp_after
             move, move_probs = player.get_action(self.board,
-                                                 temp=temp,
+                                                 temp=_t,
                                                  return_prob=1)
             # store the data
             states.append(self.board.current_state())

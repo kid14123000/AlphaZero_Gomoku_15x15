@@ -85,7 +85,7 @@ echo " 续训起点     第 ${OFFSET} 局（ckpt_it${OFFSET}.model，${SZ} B）"
 echo " 目标         ${TOTAL} 局  → 还要 $((TOTAL - OFFSET)) 局"
 echo " 吞吐预期     约 52 局/分（5 工兵） → ETA 约 $(( (TOTAL - OFFSET) / 52 / 60 )) 小时"
 echo " lr_multiplier ${LR}"
-echo " 工兵         ${WORKERS}   MCTS ${SIMS} sims / 手   value=q   eps=${EPS:-0.10}"
+echo " 工兵         ${WORKERS}   MCTS ${SIMS} sims / 手   value=q   eps=${EPS:-0.10}   temp 前${TEMP_SWITCH:-3}手=1.0 之后=${TEMP_AFTER:-0.01}"
 echo " 检查点       每 ${CKPT_EVERY} 局"
 echo "──────────────────────────────────────────────"
 
@@ -100,6 +100,8 @@ CMD=("$PY" parallel_train.py
   --epochs 5 \
   --value_target q \
   --dirichlet_eps "${EPS:-0.10}" \
+  --temp_switch "${TEMP_SWITCH:-3}" \
+  --temp_after "${TEMP_AFTER:-0.01}" \
   --init_model "checkpoints/ckpt_it${OFFSET}.model" \
   --batch_offset "$OFFSET" \
   --init_lr_multiplier "$LR" \
