@@ -186,8 +186,16 @@ def build_payload(path, window=20):
     last = games[-window:] if games else []
     lens_last = [g.get('episode_len', 0) for g in last]
 
-    # 风格指标: 快攻局 = 40 手以内解决 (黑/白各自计数)
-    FAST = 40
+    # 风格指标: 快攻局 = N 手以内解决（黑/白各自计数）
+    # 🚨 阈值不能写死 40：9×9 均手只有 18，40 手等于「全部对局」，
+    #    覆盖率恒在 98%+，完全没有区分度（9×9 五连理论最短 9 手）。
+    #    按棋盘边长自适应，前端直接用 fast_threshold 显示。
+    _bw = 15
+    try:
+        _bw = int(str(start.get('board') or '15x15').split('x')[0])
+    except ValueError:
+        pass
+    FAST = 12 if _bw <= 11 else 40
     fast_black = sum(1 for g in games
                      if g.get('winner') == 1 and g.get('episode_len', 999) <= FAST)
     fast_white = sum(1 for g in games
