@@ -262,7 +262,7 @@ def build_payload(path, window=20):
 
     # white_open / combat 的棋盘参数也要跟着走
     # （9×9 天元是 (4,4)、连子数是 5；combat 的 N/WIN 同样不能写死 15/5）
-    _sync_board_modules(start)
+    _sync_board_modules(start=start)
 
     # ---- eval series
     eval_pts = [{'batch': e['batch'], 'win_ratio': round(100.0 * e['win_ratio'], 2),
