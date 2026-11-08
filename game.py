@@ -187,13 +187,18 @@ class Game(object):
                         print("Game end. Tie")
                 return winner
 
-    def start_self_play(self, player, is_shown=0, temp=1e-3):
+    def start_self_play(self, player, is_shown=0, temp=1e-3, collect_q=False):
         """ start a self-play game using a MCTS player, reuse the search tree,
         and store the self-play data: (state, mcts_probs, z) for training
+
+        collect_q=True 时额外收集每步 MCTS 根节点的 Q（执子方视角的搜索价值），
+        用作 value 头的软标签 —— 最终胜负 ±1 同一局面只有一个答案，
+        而搜索价值能区分「险胜」和「碾压」，信息量更大。
         """
         self.board.init_board()
         p1, p2 = self.board.players
         states, mcts_probs, current_players = [], [], []
+        qs = [] if collect_q else None
         while True:
             move, move_probs = player.get_action(self.board,
                                                  temp=temp,
@@ -202,6 +207,8 @@ class Game(object):
             states.append(self.board.current_state())
             mcts_probs.append(move_probs)
             current_players.append(self.board.current_player)
+            if collect_q:
+                qs.append(player.mcts.last_root_q)
             # perform a move
             self.board.do_move(move)
             if is_shown:
@@ -220,4 +227,7 @@ class Game(object):
                         print("Game end. Winner is player:", winner)
                     else:
                         print("Game end. Tie")
+                if collect_q:
+                    return (winner, zip(states, mcts_probs, winners_z),
+                            np.asarray(qs, dtype=np.float32))
                 return winner, zip(states, mcts_probs, winners_z)

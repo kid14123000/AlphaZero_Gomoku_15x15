@@ -102,6 +102,7 @@ class MCTS(object):
         self._policy = policy_value_fn
         self._c_puct = c_puct
         self._n_playout = n_playout
+        self.last_root_q = 0.0      # 每次 get_move_probs 后更新（value 软标签用）
 
     def _playout(self, state):
         """Run a single playout from the root to the leaf, getting a value at
@@ -145,6 +146,13 @@ class MCTS(object):
         for n in range(self._n_playout):
             state_copy = copy.deepcopy(state)
             self._playout(state_copy)
+
+        # 根节点的搜索价值 Q（根节点执子方视角）。
+        # 供 value 头的软标签使用：搜索结果比网络单次前向可靠，
+        # 拿它当目标相当于「用搜索蒸馏网络」，比直接用最终胜负 ±1 信息更多。
+        # 放在这里读而不是改返回值签名，是为了不破坏既有调用点。
+        self.last_root_q = (float(self._root._Q)
+                            if self._root._n_visits > 0 else 0.0)
 
         # calc the move probabilities based on visit counts at the root node
         act_visits = [(act, node._n_visits)
