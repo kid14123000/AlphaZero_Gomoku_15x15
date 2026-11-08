@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15×15 五子棋 · 训练看板</title>
+<script src="/static/chart.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
+     background:#0f172a;color:#e2e8f0;padding:16px 18px 40px}
+h1{font-size:1.3rem;margin-bottom:10px;color:#38bdf8;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+h1 small{font-size:.75rem;color:#64748b;font-weight:400}
+.hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 14px}
+.badge{font-size:.72rem;padding:3px 11px;border-radius:20px;font-weight:500;display:inline-flex;align-items:center;gap:6px}
+.badge.run{background:#14532d;color:#4ade80}
+.badge.stop{background:#1e293b;color:#94a3b8}
+.badge .d{width:7px;height:7px;border-radius:50%;background:currentColor}
+.badge.run .d{animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+button{background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:13px;cursor:pointer}
+button:hover{background:#8b5cf6}
+button:disabled{opacity:.6;cursor:default}
+
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:stretch}
+.card{background:#1e293b;border-radius:10px;padding:14px;flex:1;min-width:190px}
+.card-title{font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;
+            margin-bottom:8px;font-weight:600;display:flex;justify-content:space-between;
+            align-items:baseline;gap:8px}
+.card-title .t2{font-size:.68rem;color:#475569;text-transform:none;letter-spacing:0;font-weight:400}
+.big{font-size:1.85rem;font-weight:700;line-height:1.1;color:#e2e8f0;font-variant-numeric:tabular-nums}
+.big-unit{font-size:.8rem;color:#64748b;font-weight:400;margin-left:3px}
+.sub{font-size:.74rem;color:#64748b;margin-top:7px;line-height:1.65}
+.sub b{color:#cbd5e1;font-weight:600}
+.progress-track{background:#0f172a;border-radius:8px;height:10px;overflow:hidden;
+                margin:10px 0 6px;border:1px solid #24324a}
+.progress-fill{height:100%;background:linear-gradient(90deg,#38bdf8,#4ade80);
+               border-radius:8px;transition:width .6s ease;box-shadow:0 0 8px rgba(56,189,248,.4)}
+.chartcard{background:#1e293b;border-radius:10px;padding:12px 14px 8px;flex:1;min-width:430px}
+.chartcard .hint{font-size:.7rem;color:#475569;margin:2px 0 6px}
+.chartbox{position:relative;height:205px}
+.chartbox.tall{height:235px}
+table{width:100%;border-collapse:collapse;font-size:.76rem;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 7px;border-bottom:1px solid #24324a}
+th{color:#64748b;font-weight:600;font-size:.68rem;text-transform:uppercase;letter-spacing:.4px}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+.pill{padding:1px 7px;border-radius:20px;font-size:.7rem}
+.pill.b{background:#1e3a5f;color:#93c5fd}
+.pill.w{background:#4a3220;color:#dcb35c}
+.empty{color:#475569;text-align:center;padding:22px 0;font-size:.8rem}
+footer{color:#334155;font-size:.7rem;margin-top:14px;display:flex;gap:18px;flex-wrap:wrap}
+/* KPI 行：8 张卡塞一行（flex+min-width:190 会挤成 6+2 两行、第二行留一大片空白） */
+/* 8 张 KPI 卡必须排一行：用固定 8 列的 grid（第一列略宽放进度条），
+   靠 auto-fit+minmax 会在 1280 宽下挤成 7+1，第二行留一大片空白。 */
+.kpirow{display:grid;grid-template-columns:1.30fr repeat(7,minmax(0,1fr));
+        gap:10px;margin-bottom:12px;align-items:stretch}
+@media (max-width:1180px){.kpirow{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media (max-width:700px){.kpirow{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpirow > .card{min-width:0}
+.kpirow .big{font-size:1.55rem}
+code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
+.wr-black{color:#60a5fa}.wr-white{color:#fbbf24}
+</style>
+</head>
+<body>
+
+<div style="display:flex;gap:7px;flex-wrap:wrap;padding:0 0 12px">
+  <a href="/dashboard" style="font-size:12.5px;padding:6px 13px;border:1px solid #38bdf8;border-radius:6px;background:#1e293b;color:#e2e8f0;text-decoration:none;font-weight:600">📊 训练监控</a>
+  <a href="/replay" style="font-size:12.5px;padding:6px 13px;border:1px solid #334155;border-radius:6px;background:#0b1220;color:#94a3b8;text-decoration:none">🗂 棋谱回放</a>
+  <a href="/play" style="font-size:12.5px;padding:6px 13px;border:1px solid #334155;border-radius:6px;background:#0b1220;color:#94a3b8;text-decoration:none">♟ 对弈</a>
+  <a href="/mcts" style="font-size:12.5px;padding:6px 13px;border:1px solid #334155;border-radius:6px;background:#0b1220;color:#94a3b8;text-decoration:none">🔍 MCTS 搜索</a>
+  <a href="/network" style="font-size:12.5px;padding:6px 13px;border:1px solid #334155;border-radius:6px;background:#0b1220;color:#94a3b8;text-decoration:none">🧠 网络前向</a>
+</div>
+
+<h1><span id="h1pre">⚫ 15×15 五子棋</span>训练
+  <span class="badge stop" id="status"><span class="d"></span>连接中…</span>
+  <small id="cfg"></small></h1>
+<div class="hdr">
+  <button id="refreshBtn" onclick="tick(true)">🔄 手动刷新</button>
+  <span style="font-size:.72rem;color:#475569" id="upd">—</span>
+  <span style="font-size:.72rem;color:#334155">· 每 5 秒自动刷新</span>
+</div>
+
+<div class="row kpirow">
+  <div class="card">
+    <div class="card-title">代数 / 自对弈局数</div>
+    <div class="big"><span id="k-batch">—</span><span class="big-unit" id="k-total">—</span></div>
+    <div class="progress-track"><div class="progress-fill" id="k-bar" style="width:0%"></div></div>
+    <div class="sub" id="k-prog">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">黑白胜率</div>
+    <div class="big"><span class="wr-black" id="k-bwr">—</span><span class="big-unit">/</span>
+      <span class="wr-white" id="k-wwr">—</span></div>
+    <div class="sub" id="k-wrsub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">⚔ 战斗激烈度 <span class="t2">0-100</span></div>
+    <div class="big" id="k-combat">—</div>
+    <div class="sub" id="k-combatsub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">均手数 <span class="t2">近 20 局</span></div>
+    <div class="big"><span id="k-len">—</span><span class="big-unit">手</span></div>
+    <div class="sub" id="k-lensub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">白棋贴身度 <span class="t2">黑1 天元局 · 近 50 局</span></div>
+    <div class="big"><span id="k-w1d">—</span><span class="big-unit">格</span></div>
+    <div class="sub" id="k-wsub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Loss <span class="t2">最近一轮</span></div>
+    <div class="big"><span id="k-loss">—</span></div>
+    <div class="sub" id="k-losssub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Policy 熵 <span class="t2" id="k-entuni">均匀 —</span></div>
+    <div class="big"><span id="k-ent">—</span></div>
+    <div class="sub" id="k-entsub">—</div>
+  </div>
+  <div class="card">
+    <div class="card-title">对纯 MCTS 胜率 <span class="t2" id="k-evaltag"></span></div>
+    <div class="big"><span id="k-eval">—</span></div>
+    <div class="sub" id="k-evalsub">—</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard" style="flex:1.12">
+    <div class="card-title">每局步长趋势 <span class="t2">20 局滚动均值</span></div>
+    <div class="hint">掉下来 = 开始速胜；长期贴近 130+ = 还在缠斗或走向和棋</div>
+    <div class="chartbox tall"><canvas id="c-len"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">黑白胜率（20 局滚动）<span class="t2">和棋不计入分母</span></div>
+    <div class="hint">黑 = 先手（player1）。距 50% 越远 = 先手红利越大</div>
+    <div class="chartbox tall"><canvas id="c-wr"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard" style="flex:1.12">
+    <div class="card-title">白棋（后手）开局贴身度 <span class="t2">左=黑1天元时白1 距黑1 中位 · 右=黑1非天元时白抢天元率</span></div>
+    <div class="hint">黑1 占天元时白贴身应 ≈1 格；黑1 不占天元时白去抢天元是正确的，所以必须分开看。左轴升到 4 格以上 = 白在跑</div>
+    <div class="chartbox tall"><canvas id="c-wopen"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">白1 应对类型 <span class="t2">近 50 局</span></div>
+    <div class="hint">贴直线/贴斜线 = 标准贴身应对；更远 = 没在限制对方</div>
+    <div class="chartbox tall"><canvas id="c-wcls"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard" style="flex:1.15">
+    <div class="card-title">⚔ 战斗激烈度 <span class="t2">指数 = 接触/贴身/防守/区域 等权平均</span></div>
+    <div class="hint">掉下去 = 双方各打各的、不互相干扰。指数从 43 掉到 23 再回到 30，就是"白方开始理黑方"的过程</div>
+    <div class="chartbox tall"><canvas id="c-combat"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">🛡 防守率 <span class="t2">该堵的手堵住了几成</span></div>
+    <div class="hint">对手"下一手就成五/成活四"时本方去应对的比例。当前个位数% = 绝大多数该防的手都没防</div>
+    <div class="chartbox tall"><canvas id="c-block"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard">
+    <div class="card-title">Loss <span class="t2">value MSE + policy CE</span></div>
+    <div class="hint" id="losshint">启动 ≈ 6.4（= 1 + ln225）；下降主要来自 policy 交叉熵</div>
+    <div class="chartbox"><canvas id="c-loss"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">Policy 熵 <span class="t2" id="entref">起点 ln(N²)=—</span></div>
+    <div class="hint" id="enthint">只降不涨 = 落点变集中；长期钉在均匀值 = policy 没在学</div>
+    <div class="chartbox"><canvas id="c-ent"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard">
+    <div class="card-title">KL 与学习率倍数 <span class="t2">左轴 KL · 右轴 lr×</span></div>
+    <div class="hint">KL &gt; 0.04 降 lr，&lt; 0.01 升 lr（kl_targ = 0.02）</div>
+    <div class="chartbox"><canvas id="c-kl"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">价值函数解释方差 <span class="t2">ev = 1 − Var(z−v)/Var(z)</span></div>
+    <div class="hint">ev_new 越接近 1，value 头越能预测胜负；长期 ≤ 0 = 没学到</div>
+    <div class="chartbox"><canvas id="c-ev"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="chartcard">
+    <div class="card-title">评估：对纯 MCTS 胜率 <span class="t2" id="evalChartTag"></span></div>
+    <div class="hint" id="evalChartHint">每 check_freq 局测 10 盘（黑白各 5 局）</div>
+    <div class="chartbox"><canvas id="c-eval"></canvas></div>
+  </div>
+  <div class="chartcard">
+    <div class="card-title">最近评估明细 <span class="t2">胜 / 负 / 和</span></div>
+    <div style="margin-top:6px;max-height:212px;overflow-y:auto" id="eval-table">
+      <div class="empty">暂无评估数据</div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <span>数据源 <code id="src">logs/metrics.jsonl</code></span>
+  <span id="xwin"></span>
+  <span id="cfg2"></span>
+</footer>
+
+<script>
+const COL = {blue:'#60a5fa', sky:'#38bdf8', green:'#4ade80', orange:'#fbbf24',
+             pink:'#f472b6', purple:'#a78bfa', grey:'#64748b',
+             grid:'#24324a', tick:'#64748b', leg:'#94a3b8'};
+
+/* ── x 轴显示窗口 ──
+ * 默认从第 1000 局开始画，1~1000 局不显示（早期是随机棋，会把纵轴压扁）。
+ * 想临时改窗口：?from=2000 ；想看全部：?from=0
+ *
+ * ⚠️ 新开的训练跑（总代数 < 1000）必须自动退回 0：否则 x.min=1000 把所有点
+ *    都裁掉，11 张图全是空格子，看着跟服务挂了一样（v2 从零跑时踩过）。
+ */
+const FROM_RAW = new URLSearchParams(location.search).get('from');
+const FROM_EXPLICIT = FROM_RAW !== null;
+let XMIN = (() => {
+  if (!FROM_EXPLICIT) return 1000;
+  const v = parseInt(FROM_RAW, 10);
+  return isNaN(v) ? 1000 : Math.max(0, v);
+})();
+/** 数据还没到默认窗口起点时自动放开（用户显式 ?from= 时不干预） */
+function autoWindow(maxX){
+  if (FROM_EXPLICIT || !maxX || XMIN === 0) return false;
+  if (maxX >= XMIN) return false;
+  XMIN = 0;
+  BASE_OPTS.scales.x.min = 0;
+  BASE_OPTS.scales.x.title.text = '代数（= 自对弈局数）';
+  return true;
+}
+
+/** 棋盘格数 → policy 均匀熵的基准（15×15 = ln225 = 5.416，9×9 = ln81 = 4.394） */
+let ENT_N = 225;
+let ENT_MAX = Math.log(225);
+function setEntN(n){
+  if (!n || n < 9) return;
+  ENT_N = n;
+  ENT_MAX = Math.log(n);
+}
+/** 数据点裁剪：丢掉 x < XMIN 的点 */
+const C = pts => pts.filter(p => p.x >= XMIN);
+/** 参考线（水平虚线）的可见端点：跟着 x 窗口收，不能从 0 画起 */
+function refPts(xs, y){
+  const keep = xs.filter(x => x >= XMIN);
+  if (!keep.length) return [];
+  const a = keep[0], b = keep[keep.length - 1];
+  return [{x: a, y}, {x: a === b ? b + 1 : b, y}];
+}
+
+const BASE_OPTS = {
+  responsive:true, maintainAspectRatio:false, animation:false,
+  interaction:{mode:'nearest', intersect:false},
+  plugins:{
+    legend:{labels:{color:COL.leg, boxWidth:10, boxHeight:10, font:{size:10}, padding:8}},
+    tooltip:{backgroundColor:'#0f172a', borderColor:'#334155', borderWidth:1,
+             titleColor:'#e2e8f0', bodyColor:'#94a3b8', titleFont:{size:11},
+             bodyFont:{size:11}, padding:8, cornerRadius:5}
+  },
+  scales:{
+    x:{type:'linear', min:XMIN, ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:8},
+       grid:{color:COL.grid},
+       title:{display:true,
+              text: XMIN ? `代数（= 自对弈局数，只显示 ≥ ${XMIN}）` : '代数（= 自对弈局数）',
+              color:'#475569', font:{size:9}}},
+    y:{ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:5},
+       grid:{color:COL.grid}, border:{display:false}}
+  }
+};
+
+function mkChart(id, optMerge){
+  const opt = JSON.parse(JSON.stringify(BASE_OPTS));
+  if (optMerge) Object.keys(optMerge).forEach(k => {
+    if (k === 'scales') Object.assign(opt.scales, optMerge.scales);
+    else opt[k] = optMerge[k];
+  });
+  return new Chart(document.getElementById(id).getContext('2d'),
+                   {type:'line', data:{datasets:[]}, options:opt});
+}
+const charts = {};
+function LN(label, color, pts, extra){
+  return Object.assign({label, borderColor:color, backgroundColor:color+'22',
+    data:pts, borderWidth:2, tension:.25, pointRadius:0, pointHoverRadius:3,
+    fill:false}, extra || {});
+}
+function REF(label, color, pts){
+  return {label, borderColor:color, data:pts, borderWidth:1,
+          borderDash:[5,4], pointRadius:0, fill:false};
+}
+
+function render(d){
+  const games = d.games || [], updates = d.updates || [], evals = d.evals || [];
+
+  // 步长
+  // 只画 20 局滚动均值：单局散点在 1000+ 局时糊成一片，把趋势线埋了
+  if (!charts.len) charts.len = mkChart('c-len');
+  charts.len.data.datasets = [
+    LN('20 局滚动均值', COL.sky,
+       C(games.map((g,i) => ({x:g[0], y:(d.len_roll||[])[i]}))), {borderWidth:2.2})
+  ];
+  charts.len.update('none');
+
+  // 黑白胜率
+  if (!charts.wr) charts.wr = mkChart('c-wr', {scales:{
+    y:{min:0, max:100, ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:6,
+       callback:v => v+'%'}, grid:{color:COL.grid}, border:{display:false}}}});
+  charts.wr.data.datasets = [
+    LN('黑胜率', COL.blue,  C(games.map((g,i) => ({x:g[0], y:(d.black_wr_roll||[])[i]})))),
+    LN('白胜率', COL.orange,C(games.map((g,i) => ({x:g[0], y:(d.white_wr_roll||[])[i]})))),
+    REF('50%（理论均衡）', COL.grey, refPts(games.map(g => g[0]), 50))
+  ];
+  charts.wr.update('none');
+
+  // Loss
+  if (!charts.loss) charts.loss = mkChart('c-loss');
+  charts.loss.data.datasets = [LN('loss', COL.pink,
+    C(updates.map(u => ({x:u.batch, y:u.loss}))),
+    {fill:true, backgroundColor:'rgba(244,114,182,.10)', borderWidth:2.2})];
+  charts.loss.update('none');
+
+  // 熵
+  // ⚠️ 均匀熵 = ln(棋盘格数)，不能写死 5.416（那是 15×15 的 ln225）。
+  //    9×9 是 ln81 = 4.394，写死会把「已降」算高三倍。
+  if (!charts.ent) charts.ent = mkChart('c-ent');
+  charts.ent.data.datasets = [
+    LN('entropy', COL.purple, C(updates.map(u => ({x:u.batch, y:u.entropy})))),
+    REF(`ln(${ENT_N})=${ENT_MAX.toFixed(3)}`, COL.grey,
+        refPts(updates.map(u => u.batch), ENT_MAX))
+  ];
+  charts.ent.update('none');
+
+  // KL + lr
+  if (!charts.kl) charts.kl = mkChart('c-kl', {scales:{
+    y:{position:'left', ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:5},
+       grid:{color:COL.grid}, border:{display:false}},
+    y1:{position:'right', ticks:{color:'#f472b6', font:{size:9}, maxTicksLimit:5},
+        grid:{drawOnChartArea:false}, border:{display:false}}}});
+  charts.kl.data.datasets = [
+    LN('KL（左轴）', COL.green, C(updates.map(u => ({x:u.batch, y:u.kl})))),
+    LN('lr ×（右轴）', COL.pink, C(updates.map(u => ({x:u.batch, y:u.lr_multiplier}))),
+       {yAxisID:'y1', borderDash:[4,3], borderWidth:1.6}),
+    (function(){ const ds = REF('kl_targ=0.02', COL.grey,
+        refPts(updates.map(u => u.batch), 0.02));
+        ds.yAxisID = 'y'; return ds; })()
+  ];
+  charts.kl.update('none');
+
+  // 解释方差
+  if (!charts.ev) charts.ev = mkChart('c-ev');
+  charts.ev.data.datasets = [
+    LN('ev_old（更新前）', COL.grey, C(updates.map(u => ({x:u.batch, y:u.ev_old}))),
+       {borderWidth:1.4, borderDash:[4,3]}),
+    LN('ev_new（更新后）', COL.green, C(updates.map(u => ({x:u.batch, y:u.ev_new}))))
+  ];
+  charts.ev.update('none');
+
+  // 评估
+  if (!charts.eval) charts.eval = mkChart('c-eval', {scales:{
+    y:{min:0, max:100, ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:6,
+       callback:v => v+'%'}, grid:{color:COL.grid}, border:{display:false}}}});
+  charts.eval.data.datasets = [
+    LN('胜率', COL.sky, C(evals.map(e => ({x:e.batch, y:e.win_ratio}))),
+       {pointRadius:3, pointHoverRadius:4, borderWidth:2.2, fill:true,
+        backgroundColor:'rgba(56,189,248,.12)'}),
+    REF('50%', COL.grey, refPts(evals.map(e => e.batch), 50))
+  ];
+  charts.eval.update('none');
+
+  renderEvalTable(evals, d.rapfi);
+
+  // 白棋（后手）开局：贴身距离 + 贴子率
+  const wo = d.white_open || {};
+  if (!charts.wopen) charts.wopen = mkChart('c-wopen', {scales:{
+    // 左轴不写死 0~9：1-1000 局藏起来后数据只在 1~5 格，固定 9 会把曲线压到地板
+    y:{position:'left', min:0, suggestedMax:6,
+       ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:5, precision:0,
+              callback:v => v + '格'},
+       grid:{color:COL.grid}, border:{display:false}},
+    y1:{position:'right', min:0, max:100,
+        ticks:{color:'#4ade80', font:{size:9}, maxTicksLimit:5, callback:v => v + '%'},
+        grid:{drawOnChartArea:false}, border:{display:false}}}});
+  const ws = wo.series || [];
+  charts.wopen.data.datasets = ws.length ? [
+    LN('天元局 白1 距黑1 中位（左轴）', COL.orange,
+       C(ws.map((s, i) => ({x:s.batch, y:(wo.roll_dist || [])[i]})))),
+    LN('非天元局 白抢天元率（右轴）', COL.green,
+       C(ws.map((s, i) => ({x:s.batch, y:(wo.roll_grab || [])[i]}))),
+       {yAxisID:'y1', borderDash:[4,3], borderWidth:1.6}),
+    REF('4 格 = 跑远了', COL.grey, refPts(ws.map(s => s.batch), 4))
+  ] : [];
+  charts.wopen.update('none');
+
+  // 白1 应对类型（柱状）
+  if (!charts.wcls){
+    charts.wcls = new Chart(document.getElementById('c-wcls').getContext('2d'),
+      {type:'bar', data:{labels:[], datasets:[]},
+       options:Object.assign(JSON.parse(JSON.stringify(BASE_OPTS)), {})});
+    charts.wcls.options.scales.x = {ticks:{color:COL.tick, font:{size:10}}, grid:{display:false}};
+    charts.wcls.options.scales.y = {min:0, max:100, ticks:{color:COL.tick, font:{size:9},
+      maxTicksLimit:5, callback:v => v + '%'}, grid:{color:COL.grid}, border:{display:false}};
+    charts.wcls.options.plugins.legend.display = false;
+  }
+  const cls = (wo.center || {}).classes || {};
+  charts.wcls.data.labels = Object.keys(cls);
+  charts.wcls.data.datasets = [{data:Object.values(cls),
+    backgroundColor:['#4ade80','#38bdf8','#fbbf24','#a78bfa','#f87171'], borderRadius:4}];
+  charts.wcls.update('none');
+}
+
+function renderEvalTable(evals, rapfi){
+  const box = document.getElementById('eval-table');
+  const A = (evals || []).map(e => ({batch:e.batch, win:e.win, lose:e.lose, tie:e.tie,
+    ratio:e.win_ratio, opp:`纯MCTS ${e.pure_playout} po`, anchor:false}));
+  const B = (rapfi || []).map(r => ({batch:r.batch, win:r.win, lose:r.lose, tie:r.tie||0,
+    ratio: r.n_games ? 100*r.win/r.n_games : 0,
+    opp:`Rapfi d${r.depth}`, anchor:true, extra:(r.avg_len?`均${r.avg_len}手`:'')}));
+  const all = A.concat(B).sort((x,y) => y.batch - x.batch).slice(0, 10);
+  if (!all.length){
+    box.innerHTML = '<div class="empty">暂无评估数据（首次评估在 check_freq 代）</div>';
+    return;
+  }
+  const rows = all.map(e => `
+    <tr${e.anchor ? ' style="background:rgba(251,191,36,.06)"' : ''}>
+      <td>第 ${e.batch} 代</td>
+      <td><span class="pill b">${e.win} 胜</span></td>
+      <td><span class="pill w">${e.lose} 负</span></td>
+      <td>${e.tie} 和</td>
+      <td style="color:${e.ratio >= 50 ? '#4ade80' : '#f87171'};font-weight:600">${e.ratio.toFixed(1)}%</td>
+      <td style="color:${e.anchor ? '#fbbf24' : '#475569'}">${e.opp}${e.extra ? ' · ' + e.extra : ''}</td>
+    </tr>`).join('');
+  box.innerHTML = `<table><thead><tr><th>代数</th><th>胜</th><th>负</th><th>和</th>
+    <th>胜率</th><th>对手</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function hm(sec){
+  if (sec === null || sec === undefined || isNaN(sec)) return '—';
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  if (h) return `${h}h${String(m).padStart(2,'0')}m`;
+  if (m) return `${m}m${String(s).padStart(2,'0')}s`;
+  return `${s}s`;
+}
+
+/* ── 战斗激烈度（数据来自 logs/games.jsonl + web/combat.py，独立于训练曲线） ── */
+let combatData = null;
+
+async function loadCombat(){
+  try {
+    const r = await fetch('/api/combat?bucket=100', {cache:'no-store'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'combat payload error');
+    combatData = d;
+    renderCombat(d);
+  } catch (e){
+    console.error('combat:', e);
+  }
+}
+
+function renderCombat(d){
+  const s = (d.series || []).filter(x => x.batch >= XMIN);
+  const o = d.overall || {};
+
+  // KPI
+  const el = document.getElementById('k-combat');
+  if (el){
+    el.textContent = F(o.composite, 1);
+    document.getElementById('k-combatsub').innerHTML =
+      `防守率 <b style="color:${(o.block_pooled||0) > .3 ? '#4ade80' : '#f87171'}">${
+        F((o.block_pooled||0)*100, 1)}%</b>` +
+      ` · 接触 <b>${F((o.contact||0)*100,0)}%</b><br>` +
+      `该防 <b>${o.block_chances ?? 0}</b> 次 · 防住 <b>${o.block_hits ?? 0}</b> 次`;
+  }
+
+  // 图 1：激烈度 + 接触率 + 手数中位（右轴）
+  // y 轴自适应：数据实际只在 23~43，写死 0~100 会把三条线全压到地板（趋势看不见）
+  if (!charts.combat) charts.combat = mkChart('c-combat', {scales:{
+    y:{min:0, ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:6},
+       grid:{color:COL.grid}, border:{display:false}},
+    y1:{position:'right', min:0, ticks:{color:'#64748b', font:{size:9}, maxTicksLimit:5},
+        grid:{drawOnChartArea:false}, border:{display:false}}}});
+  charts.combat.data.datasets = [
+    LN('激烈度指数', COL.orange, C(s.map(x => ({x:x.batch, y:x.composite}))),
+       {borderWidth:2.4, pointRadius:2}),
+    LN('接触率 %', COL.sky, C(s.map(x => ({x:x.batch, y:x.contact}))),
+       {borderWidth:1.6, borderDash:[5,3], pointRadius:0}),
+    LN('手数中位（右轴）', COL.grey, C(s.map(x => ({x:x.batch, y:x.len_median}))),
+       {borderWidth:1.3, borderDash:[2,3], pointRadius:0, yAxisID:'y1'})
+  ];
+  const cv = s.map(x => x.composite).filter(v => v !== null);
+  const ln = s.map(x => x.len_median).filter(v => v !== null);
+  if (cv.length){
+    charts.combat.options.scales.y.max = Math.max(40, Math.ceil(Math.max(...cv) * 1.25 / 10) * 10);
+  }
+  if (ln.length){
+    charts.combat.options.scales.y1.max = Math.ceil(Math.max(...ln) * 1.25 / 10) * 10;
+  }
+  charts.combat.update('none');
+
+  // 图 2：防守率 + 必堵点响应 + 该防次数
+  // 这条线绝对值只有 5%~15%（这本身就是结论），所以左轴同样自适应看趋势；
+  // 绝对水平由上面 KPI（该防 8462 次 / 防住 483 次）兜底，不会误导。
+  if (!charts.block) charts.block = mkChart('c-block', {scales:{
+    y:{min:0, ticks:{color:COL.tick, font:{size:9}, maxTicksLimit:6,
+       callback:v => v + '%'}, grid:{color:COL.grid}, border:{display:false}},
+    y1:{position:'right', min:0, ticks:{color:'#64748b', font:{size:9}, maxTicksLimit:5},
+        grid:{drawOnChartArea:false}, border:{display:false}}}});
+  charts.block.data.datasets = [
+    LN('防守率 %（左轴）', COL.green, C(s.map(x => ({x:x.batch, y:x.block}))),
+       {borderWidth:2.4, pointRadius:2, fill:true, backgroundColor:'rgba(74,222,128,.10)'}),
+    LN('必堵点响应 %', COL.blue, C(s.map(x => ({x:x.batch, y:x.must_block}))),
+       {borderWidth:1.4, borderDash:[4,3], pointRadius:0}),
+    LN('该防次数（右轴）', COL.grey, C(s.map(x => ({x:x.batch, y:x.block_chances}))),
+       {borderWidth:1.2, borderDash:[2,3], pointRadius:0, yAxisID:'y1'})
+  ];
+  const bv = s.map(x => Math.max(x.block || 0, x.must_block || 0)).filter(v => v > 0);
+  const bc = s.map(x => x.block_chances).filter(v => v !== null);
+  if (bv.length){
+    charts.block.options.scales.y.max = Math.max(10, Math.ceil(Math.max(...bv) * 1.3 / 5) * 5);
+  }
+  if (bc.length){
+    charts.block.options.scales.y1.max = Math.ceil(Math.max(...bc) * 1.25 / 100) * 100;
+  }
+  charts.block.update('none');
+}
+const F = (v, d) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
+
+function renderKpis(d){
+  const s = d.status || {}, m = d.summary || {};
+  document.getElementById('k-batch').textContent = s.batch || 0;
+  document.getElementById('k-total').textContent = '/ ' + (s.total || '?') + ' 局';
+  document.getElementById('k-bar').style.width =
+    (s.total ? Math.min(100, 100*s.batch/s.total) : 0).toFixed(1) + '%';
+  const evalOffK = ((d.config || {}).eval_pure === 0);
+  document.getElementById('k-prog').innerHTML =
+    `累计已用 <b>${hm(s.lineage_elapsed)}</b> · 预计剩余 <b>${hm(s.eta)}</b> · 单局 <b>${
+      s.per_game ? s.per_game.toFixed(1) : '—'}s</b>` +
+    (evalOffK ? ''
+      : (s.eval_cost ? ` · 每次评估 ≈ <b>${hm(s.eval_cost)}</b>` : ''));
+
+  document.getElementById('k-bwr').textContent = F(m.black_wr, 1) + '%';
+  document.getElementById('k-wwr').textContent = F(m.white_wr, 1) + '%';
+  document.getElementById('k-wrsub').innerHTML =
+    `黑 <b>${m.black_wins}</b> · 白 <b>${m.white_wins}</b> · 和 <b>${m.ties}</b>`;
+
+  document.getElementById('k-len').textContent = F(m.len_avg_last, 1);
+  document.getElementById('k-lensub').innerHTML =
+    `中位 <b>${m.len_median_last ?? '—'}</b> · 全体均 <b>${F(m.len_avg,1)}</b><br>` +
+    `快攻≤${m.fast_threshold ?? 40}手 <b>${F(m.fast_rate,1)}%</b>（黑${m.fast_black ?? 0}/白${m.fast_white ?? 0}）`;
+
+  const wo = d.white_open || {};
+  const wc = wo.center || {}, wo2 = wo.offcenter || {};
+  document.getElementById('k-w1d').textContent = wc.n ? F(wc.w1d_median, 1) : '—';
+  document.getElementById('k-wsub').innerHTML = wc.n
+    ? `天元局 <b>${wc.n}</b> 局（占 ${F(wc.share,0)}%）· 贴身率 <b>${F(wc.contact_rate,1)}%</b><br>` +
+      `跑远≥4格 <b>${F(wc.far_rate,1)}%</b> · 白抢中心率 <b>${F(wo2.grab_rate ?? 0,1)}%</b><br>` +
+      `白2距黑 <b>${F(wc.w2d_median,1)}</b> · 分散度 <b>${F(wc.spread,2)}</b>`
+    : '尚无棋谱（--save-games 开启后累计）';
+
+  document.getElementById('k-loss').textContent = F(m.loss_last, 3);
+  document.getElementById('k-losssub').innerHTML =
+    `近 10 轮均值 <b>${F(m.loss_avg10, 3)}</b> · 更新 <b>${m.updates ?? 0}</b> 次`;
+
+  document.getElementById('k-ent').textContent = F(m.entropy_last, 3);
+  document.getElementById('k-entuni').textContent = `均匀 ${ENT_MAX.toFixed(3)}`;
+  document.getElementById('k-entsub').innerHTML =
+    `近 10 轮均值 <b>${F(m.entropy_avg10, 3)}</b>` +
+    (m.entropy_last !== null && m.entropy_last !== undefined
+      ? ` · 已降 <b>${F((1 - m.entropy_last/ENT_MAX)*100, 1)}%</b>` : '');
+
+  const ev = m.eval_last;
+  document.getElementById('k-eval').textContent = ev ? ev.win_ratio.toFixed(1) + '%' : '—';
+  document.getElementById('k-evalsub').innerHTML = ev
+    ? `@ 第 <b>${ev.batch}</b> 代 · <b>${ev.win}</b> 胜 <b>${ev.lose}</b> 负 <b>${ev.tie}</b> 和`
+    : '首次评估在 check_freq 代';
+
+  // 纯 MCTS 评估已停用时，明确标注，避免把历史 100% 当成当前棋力
+  const evalOff = (d.config || {}).eval_pure === 0;
+  const tagEl = document.getElementById('k-evaltag');
+  const chartTag = document.getElementById('evalChartTag');
+  const chartHint = document.getElementById('evalChartHint');
+  if (evalOff) {
+    const lastB = ev ? ev.batch : 0;
+    // 大数字换成「已停用」：保留 100% 会让人以为这是当前棋力
+    document.getElementById('k-eval').innerHTML =
+      '<span style="font-size:1.05rem;color:#f87171">已停用</span>';
+    document.getElementById('k-evalsub').innerHTML = ev
+      ? `历史最后一次：@ 第 <b>${lastB}</b> 代 ${ev.win_ratio.toFixed(0)}%（${ev.win}胜${ev.lose}负）`
+      : '未启用';
+    if (tagEl) { tagEl.textContent = '改看 Rapfi'; tagEl.style.color = '#f87171'; }
+    if (chartTag) { chartTag.textContent = '已停用 · 只剩历史数据'; chartTag.style.color = '#f87171'; }
+    if (chartHint) chartHint.innerHTML =
+      `对纯 MCTS 已长期 100%，指标饱和没有区分度，已关闭（最后测于第 ${lastB} 代）。` +
+      `棋力请看 Rapfi 锚点。`;
+  }
+}
+
+let busy = false;
+let tickN = 0;
+async function tick(manual){
+  if (busy) return;
+  busy = true;
+  const btn = document.getElementById('refreshBtn');
+  if (manual){ btn.textContent = '刷新中…'; btn.disabled = true; }
+  try {
+    const r = await fetch('/api/metrics', {cache:'no-store'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || 'payload error');
+    const s = d.status || {};
+    const st = document.getElementById('status');
+    const running = !!s.running;
+    st.className = 'badge ' + (running ? 'run' : 'stop');
+    st.innerHTML = `<span class="d"></span>` + (running
+      ? `训练中 · 第 ${s.batch} 代`
+      : (s.finished ? `已结束 · 共 ${s.total} 代` : '未在训练（无新数据）'));
+    const c = d.config || {};
+    const evalOff2 = c.eval_pure === 0;
+    // 棋盘与连子数都从日志读：9×9/四连 与 15×15/五连 共用这套看板
+    const boardTxt = c.board || '';
+    const nRow = Number(c.n_in_row);
+    const rowTxt = nRow ? `${nRow} 连` : '五连';
+    // 熵基准跟着棋盘走：9×9 → ln81，15×15 → ln225
+    {
+      const bp = String(boardTxt || '15x15').split('x');
+      const bw = parseInt(bp[0], 10) || 15;
+      const bh = parseInt(bp[1] || bp[0], 10) || bw;
+      setEntN(bw * bh);
+      const refEl = document.getElementById('entref');
+      if (refEl) refEl.textContent = `起点 ln(${bw}×${bh})=${ENT_MAX.toFixed(3)}`;
+      const lh = document.getElementById('losshint');
+      if (lh) lh.textContent = `启动 ≈ ${(1 + ENT_MAX).toFixed(2)}（= 1 + ln${bw * bh}）；下降主要来自 policy 交叉熵`;
+    }
+    document.getElementById('h1pre').textContent = `⚫ ${boardTxt || '15×15'} ` +
+      (nRow === 4 ? '四连' : nRow === 5 ? '五子棋' : '棋');
+    document.title = `${boardTxt || '15×15'} ${nRow === 4 ? '四连' : '五子棋'} · 训练看板`;
+    document.getElementById('cfg').textContent =
+      `${boardTxt} · ${rowTxt} · ${c.n_playout ?? '?'} playouts · batch ${c.batch_size ?? '?'} · ` +
+      (evalOff2 ? `每 ${c.check_freq ?? '?'} 代存档（不做纯MCTS评估）`
+                : `每 ${c.check_freq ?? '?'} 代评估`);
+    const lastEval = (d.evals && d.evals.length) ? d.evals[d.evals.length - 1] : null;
+    const oppPo = lastEval && lastEval.pure_playout != null ? lastEval.pure_playout : (c.pure_mcts_playout_num ?? '?');
+    document.getElementById('cfg2').innerHTML = evalOff2
+      ? `纯 MCTS 评估：<b style="color:#f87171">已停用</b>（历史最后一次用到 ${oppPo} playouts）· 棋力请看 Rapfi`
+      : `评估对手：纯 MCTS ${oppPo} playouts`;
+    const xw = document.getElementById('xwin');
+    const maxX = d.games && d.games.length ? d.games[d.games.length - 1][0] : 0;
+    autoWindow(maxX);          // 新跑没到 1000 局就自动放开窗口，别让图留空
+    xw.innerHTML = XMIN
+      ? `图表 x 轴：第 <b style="color:#cbd5e1">${XMIN}</b> 局起（1–${XMIN - 1} 局已隐藏）` +
+        (maxX && maxX < XMIN
+          ? ` <span style="color:#f87171">· 目前只跑到 ${maxX} 局，所以曲线还是空的</span>`
+          : '') +
+        ` · <a href="?from=0" style="color:#7dd3fc">看全部</a>`
+      : `图表 x 轴：<b style="color:#cbd5e1">全部 1–${maxX}</b> 局 · <a href="/dashboard" style="color:#7dd3fc">只看 1000 以后</a>`;
+    renderKpis(d);
+    render(d);
+    // 战斗指标走单独的接口（读 games.jsonl，不是 metrics.jsonl），
+    // 每 6 次刷新拉一次即可（约 30s），避免每 5s 都算一遍
+    if (tickN++ % 6 === 0) loadCombat();
+    document.getElementById('upd').textContent =
+      '最后数据 ' + new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  } catch(e){
+    const st = document.getElementById('status');
+    st.className = 'badge stop';
+    st.innerHTML = `<span class="d"></span>读取失败：${e.message}`;
+  } finally {
+    busy = false;
+    if (manual){ btn.textContent = '🔄 手动刷新'; btn.disabled = false; }
+  }
+}
+tick();
+setInterval(() => tick(false), 5000);
+</script>
+</body>
+</html>
