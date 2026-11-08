@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCTS 搜索 · 15×15 五子棋</title>
+<link rel="stylesheet" href="/static/gomoku.css">
+<script src="/static/chart.min.js"></script>
+<script src="/static/gomoku.js"></script>
+</head>
+<body>
+<h1>🔍 MCTS 搜索可视化 <small>摆谱 → 模拟 → 看搜索把概率挪到哪</small></h1>
+<div class="sub">左侧摆任意局面（点空点落子，点已有棋子=退回到该手之前），选权重跑搜索。每次模拟的路径都能回放。</div>
+
+<div class="wrap">
+  <!-- 摆谱 -->
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="setup" class="board"></canvas>
+      <div class="thinking" id="thinking1"><div class="spinner"></div><span>搜索中…</span></div>
+    </div>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="ctl" style="margin-bottom:6px">
+        <span style="font-size:12px;color:#64748b">当前该走：</span>
+        <b id="curColor" style="color:#93c5fd">⚫ 黑</b>
+        <span class="hint" style="margin:0" id="setupInfo">空盘</span>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <button class="tiny" onclick="ed.undo()">↩ 回退</button>
+        <button class="tiny" onclick="ed.clear()">🗑 清空</button>
+        <button class="tiny" onclick="takeGameBoard()">📋 取对弈局面</button>
+        <button class="tiny" onclick="savePos()">💾 存</button>
+        <select id="posList" class="tiny" onmousedown="this.value=''" onchange="loadPos()" style="max-width:110px">
+          <option value="">载入…</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- 结果棋盘 -->
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="result" class="board"></canvas>
+      <div class="thinking" id="thinking2"><div class="spinner"></div><span>搜索中…</span></div>
+    </div>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="ctl" style="margin-bottom:0">
+        <label style="min-width:auto">热力图</label>
+        <select id="heatMode" onchange="drawResult()">
+          <option value="visits">MCTS 访问次数</option>
+          <option value="policy">网络先验 policy</option>
+        </select>
+        <span class="hint" style="margin:0">★ = 最终选点</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 控制 + 结果 -->
+  <div class="col-side">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">搜索设置</div>
+      <div class="ctl">
+        <label>权重</label>
+        <select id="model" style="flex:1"><option>加载中…</option></select>
+      </div>
+      <div class="ctl">
+        <label>模拟次数</label>
+        <input type="range" id="nplayout" min="10" max="800" step="10" value="100" style="flex:1">
+        <b id="nplayoutV" style="min-width:38px;text-align:right">100</b>
+      </div>
+      <div class="ctl">
+        <label>c_puct</label>
+        <input type="range" id="cpuct" min="0.5" max="15" step="0.5" value="5" style="flex:1">
+        <b id="cpuctV" style="min-width:38px;text-align:right">5.0</b>
+      </div>
+      <div class="ctl">
+        <label>温度 τ</label>
+        <input type="range" id="temp" min="0.05" max="2" step="0.05" value="1" style="flex:1">
+        <b id="tempV" style="min-width:38px;text-align:right">1.00</b>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <button class="primary" onclick="run()">▶ 开始搜索模拟</button>
+        <button onclick="resetResult()">清空结果</button>
+      </div>
+      <div class="hint" style="margin:8px 0 0">
+        c_puct 越大越鼓励探索访问少的点；τ 只影响「从中挑哪一手」，不改搜索本身。
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">🎯 最终候选 <span class="t2" id="bestMeta"></span></div>
+      <div id="bestBox"><div class="empty">还没有搜索结果</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">📊 候选明细 <span class="t2">按访问次数</span></div>
+      <div class="scroll" id="candTable"><div class="empty">还没有搜索结果</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">🧭 搜索 vs 网络先验 <span class="t2">偏离越大 = 搜索改主意越多</span></div>
+      <div id="devBox"><div class="empty">还没有搜索结果</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">📏 模拟深度分布 <span class="t2" id="depthMeta"></span></div>
+      <div style="position:relative;height:130px"><canvas id="depthChart"></canvas></div>
+      <div class="hint" style="margin:6px 0 0">policy/value 配合好 → 搜得深；大量停在 1~2 层 = 先验分散、在浅层乱撞。</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">🎬 模拟回放 <span class="t2" id="replayMeta"></span></div>
+      <div class="ctl">
+        <input type="range" id="step" min="0" max="0" value="0" style="flex:1" oninput="showStep()">
+        <b id="stepV" style="min-width:52px;text-align:right">–</b>
+      </div>
+      <div class="scroll" id="stepBox" style="max-height:190px">
+        <div class="empty">跑一次搜索后可逐条回放每次模拟的路径</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+renderNav('/mcts');
+
+let ed = null;
+let rview = null;
+let last = null;
+let depthChart = null;
+
+init();
+
+async function init() {
+  await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
+  ed = new PositionEditor($('setup'), {
+    size: 380,
+    onChange: (stones, cur) => {
+      $('curColor').innerHTML = cur === 1 ? '⚫ 黑' : '⚪ 白';
+      $('curColor').style.color = cur === 1 ? '#93c5fd' : '#fcd34d';
+      $('setupInfo').textContent = stones.length
+        ? `${stones.length} 手 · 轮到${cur === 1 ? '黑' : '白'}`
+        : '空盘';
+    },
+  });
+  rview = new BoardView($('result'), {size: BOARD_PX, showNumbers: true, hover: false});
+  ['nplayout', 'cpuct', 'temp'].forEach(id => {
+    $(id).addEventListener('input', e => {
+      const v = id === 'temp' ? Number(e.target.value).toFixed(2)
+        : id === 'cpuct' ? Number(e.target.value).toFixed(1) : e.target.value;
+      $(id + 'V').textContent = v;
+    });
+  });
+  try {
+    await fillModels('model');
+    $('model').value = $('model').options[0].value;
+  } catch (e) { alert('权重加载失败：' + e.message); }
+  refreshPositions();
+}
+
+function think(on) {
+  $('thinking1').classList.toggle('on', on);
+  $('thinking2').classList.toggle('on', on);
+}
+
+async function run() {
+  const body = {
+    stones: ed.stones,
+    model: $('model').value,
+    n_playout: +$('nplayout').value,
+    c_puct: +$('cpuct').value,
+    temp: +$('temp').value,
+  };
+  think(true);
+  try {
+    const d = await api('/api/viz/mcts', body);
+    last = d;
+    renderAll(d);
+  } catch (e) {
+    alert('搜索失败：' + e.message);
+  } finally { think(false); }
+}
+
+function resetResult() {
+  last = null;
+  rview.setState({stones: ed.stones.map((s, i) => ({...s, p: i % 2 ? 2 : 1, n: i + 1})),
+                  heat: null, marks: [], lastMove: null});
+  $('bestBox').innerHTML = '<div class="empty">还没有搜索结果</div>';
+  $('candTable').innerHTML = '<div class="empty">还没有搜索结果</div>';
+  $('devBox').innerHTML = '<div class="empty">还没有搜索结果</div>';
+  $('stepBox').innerHTML = '<div class="empty">跑一次搜索后可逐条回放</div>';
+  $('bestMeta').textContent = '';
+  $('depthMeta').textContent = '';
+  $('replayMeta').textContent = '';
+  if (depthChart) { depthChart.data.labels = []; depthChart.data.datasets[0].data = []; depthChart.update('none'); }
+}
+
+function heatGrid(d, mode) {
+  if (mode === 'policy') return d.policy_grid;
+  const g = new Array(225).fill(null);
+  d.children.forEach(c => { g[c.action] = c.visits; });
+  return g;
+}
+
+function drawResult() {
+  if (!last) { resetResult(); return; }
+  const mode = $('heatMode').value;
+  const stones = last.stones.map(s => ({r: s.r, c: s.c, p: s.p, n: s.n}));
+  const marks = [];
+  [...last.children].slice(0, 6).forEach((c, i) => {
+    marks.push({
+      r: c.r, c: c.c,
+      label: i === 0 ? '★' : String(i + 1),
+      color: i === 0 ? '#fbbf24' : '#38bdf8',
+      width: i === 0 ? 2.8 : 1.4,
+      r_px: i === 0 ? 16 : 14 - i,
+    });
+  });
+  rview.setState({
+    stones,
+    lastMove: stones.length ? {r: stones[stones.length - 1].r, c: stones[stones.length - 1].c} : null,
+    heat: heatGrid(last, mode),
+    heatMode: mode === 'policy' ? 'prob' : 'prob',
+    heatAlpha: .6,
+    marks,
+  });
+}
+
+function renderAll(d) {
+  drawResult();
+
+  const b = d.best;
+  $('bestMeta').textContent = `${d.sim_count} 次模拟 · 根访问 ${d.root_visits} · 展开 ${d.n_expanded} 点`;
+  if (b) {
+    $('bestBox').innerHTML = `
+      <div class="kv"><span>最终选点</span><span>★ ${b.r},${b.c}</span></div>
+      <div class="kv"><span>访问 / 占比</span><span>${b.visits} · ${b.prob.toFixed(1)}%</span></div>
+      <div class="kv"><span>Q 值</span><span>${fx(b.Q, 3)}</span></div>
+      <div class="kv"><span>网络先验 P</span><span>${fx(b.P, 4)}</span></div>
+      <div class="kv"><span>τ=${fx(d.temp,2)} 采样概率</span><span>${fx(b.temp_prob,1)}%</span></div>
+      <div class="kv"><span>根局面 value</span><span>${fx(d.root_value, 3)}</span></div>`;
+  }
+
+  $('candTable').innerHTML = `<table><thead><tr>
+      <th>点</th><th>访问</th><th>占比</th><th>Q</th><th>P</th></tr></thead><tbody>` +
+    d.children.map((c, i) => `<tr>
+      <td>${i === 0 ? '★' : i + 1} ${c.r},${c.c}</td>
+      <td>${c.visits}</td><td>${c.prob.toFixed(1)}%</td>
+      <td>${fx(c.Q, 3)}</td><td>${fx(c.P, 4)}</td></tr>`).join('') +
+    '</tbody></table>';
+
+  const dev = d.pol_dev;
+  if (dev) {
+    $('devBox').innerHTML = `
+      <div class="kv"><span>TV（挪走多少概率质量）</span><span>${fx(dev.tv*100,1)}%</span></div>
+      <div class="kv"><span>余弦相似度</span><span>${fx(dev.cos,3)}</span></div>
+      <div class="kv"><span>KL(policy‖mcts)</span><span>${fx(dev.kl,3)}</span></div>
+      <div class="kv"><span>MAE</span><span>${dev.mae.toExponential(2)}</span></div>
+      <div class="kv"><span>argmax 一致</span><span>${dev.argmax_same
+        ? '<span class="pill ok">一致</span>' : '<span class="pill bad">不一致</span>'}</span></div>
+      <div class="kv"><span>合法点</span><span>${dev.n_legal}</span></div>`;
+  } else {
+    $('devBox').innerHTML = '<div class="empty">无（无可比数据）</div>';
+  }
+
+  $('depthMeta').textContent = `均深 ${d.avg_depth} · 最深 ${d.max_depth}`;
+  const labels = d.depth_hist.map(x => 'L' + x.depth);
+  const data = d.depth_hist.map(x => x.count);
+  if (!depthChart) {
+    depthChart = new Chart($('depthChart').getContext('2d'), {
+      type: 'bar',
+      data: {labels, datasets: [{label: '模拟次数', data, backgroundColor: '#38bdf8'}]},
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {legend: {display: false}},
+        scales: {
+          x: {ticks: {color: '#64748b', font: {size: 9}}, grid: {display: false}},
+          y: {ticks: {color: '#64748b', font: {size: 9}}, grid: {color: '#24324a'}},
+        },
+      },
+    });
+  } else {
+    depthChart.data.labels = labels;
+    depthChart.data.datasets[0].data = data;
+    depthChart.update('none');
+  }
+
+  const sl = $('step');
+  sl.max = Math.max(0, d.steps.length);
+  sl.value = sl.max;
+  $('replayMeta').textContent = d.truncated
+    ? `只保留前 ${d.steps.length} 次（超出上限）` : `${d.steps.length} 次模拟`;
+  showStep();
+}
+
+function showStep() {
+  if (!last) return;
+  const i = +$('step').value;
+  const total = last.steps.length;
+  $('stepV').textContent = total ? `${i}/${total}` : '–';
+  if (!total) { $('stepBox').innerHTML = '<div class="empty">无数据</div>'; return; }
+  const s = last.steps[Math.min(i, total - 1)];
+  if (!s) return;
+
+  const pathHtml = s.path.length ? s.path.map((p, k) => {
+    const Q = p.Q === undefined ? '—' : fx(p.Q, 3);
+    const P = p.P === undefined ? '—' : fx(p.P, 4);
+    return `<div class="kv"><span>#${k + 1} · ${(p.action / 15) | 0},${p.action % 15}</span>
+      <span>访问 ${p.visits ?? '—'} · Q ${Q} · P ${P}</span></div>`;
+  }).join('') : '<div class="kv"><span>（根节点即叶子，本次直接评估根）</span><span></span></div>';
+
+  const leaf = s.leaf || {};
+  const prior = (leaf.prior_top || []).slice(0, 3).map(t =>
+    `${(t[0] / 15) | 0},${t[0] % 15} ${(t[1] * 100).toFixed(1)}%`).join(' · ');
+
+  $('stepBox').innerHTML = `
+    <div class="kv"><span>第 ${s.path.length ? s.path.length + 1 : 1} 次模拟</span>
+      <span>根访问累计 ${s.root_visits ?? '—'}</span></div>
+    ${pathHtml}
+    <div style="margin:7px 0 3px;font-size:11px;color:#64748b">叶子评估</div>
+    <div class="kv"><span>${leaf.terminal ? '终局' : '网络 value'}</span>
+      <span>${fx(leaf.value, 3)}${leaf.terminal ? '（真实结果）' : ''}</span></div>
+    <div class="kv"><span>合法点</span><span>${leaf.legal ?? '—'}</span></div>
+    ${prior ? `<div style="margin-top:4px;font-size:11px;color:#94a3b8;line-height:1.6">
+      叶子先验 Top3：${prior}</div>` : ''}`;
+}
+
+/* ── 与对弈页/存档互通 ── */
+async function takeGameBoard() {
+  try {
+    const d = await api('/api/game/state');
+    if (!d.state || !d.state.moves.length) { alert('对弈页还没有局面'); return; }
+    ed.set(d.state.moves);
+  } catch (e) { alert('读取失败：' + e.message); }
+}
+
+async function refreshPositions() {
+  try {
+    const d = await api('/api/positions/list');
+    const sel = $('posList');
+    sel.innerHTML = '<option value="">载入…</option>';
+    d.positions.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;
+      o.textContent = `${p.name}（${p.n}）`;
+      sel.appendChild(o);
+    });
+  } catch (e) {}
+}
+
+async function savePos() {
+  const name = prompt('局面名称', `摆谱_${ed.stones.length}手`);
+  if (!name) return;
+  try {
+    await api('/api/positions/save', {name, stones: ed.stones, note: 'MCTS 页摆谱'});
+    await refreshPositions();
+  } catch (e) { alert('保存失败：' + e.message); }
+}
+
+async function loadPos() {
+  const name = $('posList').value;
+  if (!name) return;
+  try {
+    const d = await api('/api/positions/load', {name});
+    ed.loadFromServer(d.position.stones);
+  } catch (e) { alert('载入失败：' + e.message); }
+}
+</script>
+</body>
+</html>

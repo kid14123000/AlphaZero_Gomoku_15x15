@@ -1,0 +1,123 @@
+/* 五子棋 Web 工具链共享样式 —— 与训练看板同一套暗色调 */
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;
+     background:#0f172a;color:#e2e8f0;padding:14px 16px 40px}
+a{color:#7dd3fc;text-decoration:none}
+
+/* ── 导航 ── */
+nav{display:flex;gap:7px;padding:0 0 12px;flex-wrap:wrap}
+nav a{font-size:12.5px;padding:6px 13px;border:1px solid #334155;border-radius:6px;
+      background:#0b1220;color:#94a3b8;transition:.15s}
+nav a:hover{background:#1e293b;color:#e2e8f0}
+nav a.active{background:#1e293b;border-color:#38bdf8;color:#e2e8f0;font-weight:600}
+
+h1{font-size:1.22rem;margin:2px 0 4px;color:#38bdf8;display:flex;align-items:center;
+   gap:9px;flex-wrap:wrap}
+h1 small{font-size:.72rem;color:#64748b;font-weight:400}
+.sub{font-size:.75rem;color:#64748b;margin-bottom:10px;line-height:1.5}
+
+/* ── 布局 ── */
+.wrap{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.col-main{flex:0 0 auto}
+.col-side{flex:1;min-width:330px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px}
+.card{background:#1e293b;border-radius:10px;padding:12px 14px;flex:1;min-width:200px}
+.card.narrow{min-width:0}
+.card-title{font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;
+            margin-bottom:8px;font-weight:600;display:flex;justify-content:space-between;
+            align-items:baseline;gap:8px}
+.card-title .t2{font-size:.68rem;color:#475569;text-transform:none;letter-spacing:0;font-weight:400}
+.hint{font-size:.7rem;color:#475569;margin:-4px 0 8px;line-height:1.5}
+
+/* ── 控件 ── */
+label{font-size:12.5px;color:#94a3b8}
+select,input[type=number],input[type=text]{background:#0b1220;color:#e2e8f0;
+  border:1px solid #334155;border-radius:5px;padding:5px 7px;font-size:12.5px;
+  font-family:inherit;outline:none}
+select:focus,input:focus{border-color:#38bdf8}
+input[type=range]{accent-color:#38bdf8;height:18px}
+button{background:#1e293b;color:#cbd5e1;border:1px solid #475569;border-radius:6px;
+  padding:5px 12px;font-size:12.5px;cursor:pointer;font-family:inherit;transition:.15s}
+button:hover{background:#334155;color:#fff}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:#7c3aed;border-color:#7c3aed;color:#fff;font-weight:600}
+button.primary:hover{background:#8b5cf6}
+button.danger{background:#1e293b;border-color:#7f1d1d;color:#f87171}
+button.danger:hover{background:#450a0a}
+button.tiny{padding:3px 8px;font-size:11px}
+.ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px}
+.ctl > label{min-width:64px}
+
+/* ── 棋盘 ── */
+.board-wrap{position:relative;background:#1e293b;border-radius:12px;padding:8px;
+            border:1px solid #24324a}
+canvas.board{display:block;border-radius:8px;cursor:crosshair}
+canvas.board.frozen{cursor:default}
+.thinking{position:absolute;inset:8px;background:rgba(15,23,42,.62);border-radius:8px;
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  font-size:12.5px;color:#7dd3fc;backdrop-filter:blur(1px)}
+.thinking.on{display:flex}
+.spinner{width:26px;height:26px;border:3px solid #334155;border-top-color:#38bdf8;
+  border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 状态条 ── */
+.status{background:#0b1220;border:1px solid #24324a;border-radius:8px;padding:9px 12px;
+  font-size:13px;line-height:1.6;margin-bottom:10px;min-height:38px}
+.status .black{color:#93c5fd;font-weight:600}
+.status .white{color:#fcd34d;font-weight:600}
+.status .warn{color:#f87171}
+
+/* ── 小格子网格（热力图/平面图） ── */
+.grids{display:flex;gap:10px;flex-wrap:wrap}
+.mini{text-align:center}
+.mini canvas{display:block;border-radius:5px;background:#c8a04c;cursor:pointer}
+.mini .cap{font-size:10.5px;color:#64748b;margin-top:3px}
+
+/* ── 表格 ── */
+table{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:4px 6px;border-bottom:1px solid #24324a}
+th{color:#64748b;font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;
+   position:sticky;top:0;background:#1e293b}
+th:first-child,td:first-child{text-align:left}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:#24324a}
+.scroll{max-height:240px;overflow-y:auto}
+
+/* ── 徽章 / 标签 ── */
+.pill{padding:1px 7px;border-radius:20px;font-size:11px;display:inline-block}
+.pill.b{background:#1e3a5f;color:#93c5fd}
+.pill.w{background:#4a3220;color:#fcd34d}
+.pill.ok{background:#14532d;color:#4ade80}
+.pill.bad{background:#450a0a;color:#f87171}
+.pill.n{background:#24324a;color:#94a3b8}
+.kv{display:flex;justify-content:space-between;font-size:12px;padding:2.5px 0;
+    border-bottom:1px dashed #24324a}
+.kv:last-child{border-bottom:0}
+.kv span:first-child{color:#64748b}
+.kv span:last-child{color:#e2e8f0;font-variant-numeric:tabular-nums;font-weight:600}
+.big{font-size:1.55rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.15}
+.big-unit{font-size:.78rem;color:#64748b;font-weight:400;margin-left:3px}
+
+/* ── 计算图 ── */
+.dag{display:flex;flex-direction:column;gap:6px;font-size:11.5px}
+.dag .node{display:flex;align-items:center;gap:8px;background:#0b1220;border:1px solid #24324a;
+  border-radius:6px;padding:5px 9px}
+.dag .node .nm{color:#7dd3fc;min-width:74px;font-weight:600}
+.dag .node .op{color:#94a3b8;flex:1}
+.dag .node .pp{color:#64748b;font-variant-numeric:tabular-nums}
+.dag .branch{display:flex;gap:8px;align-items:stretch}
+.dag .branch > div{flex:1;display:flex;flex-direction:column;gap:6px}
+.dag .fork{text-align:center;color:#475569;font-size:11px;line-height:1}
+.dag .node.pol{border-left:3px solid #f472b6}
+.dag .node.val{border-left:3px solid #4ade80}
+
+/* ── 落子记录 ── */
+.history{font-size:12px;line-height:1.75;color:#94a3b8;max-height:150px;overflow-y:auto;
+  font-variant-numeric:tabular-nums}
+.history b{color:#e2e8f0}
+.history .b{color:#93c5fd}
+.history .w{color:#fcd34d}
+
+.empty{color:#475569;text-align:center;padding:18px 0;font-size:12.5px}
+.mono{font-family:'SF Mono','Cascadia Code',monospace;font-size:11.5px}
