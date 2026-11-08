@@ -166,13 +166,18 @@ def build_payload(path, window=20):
     # ---- timing / ETA
     # Only games from the CURRENT session count for throughput: a resume boundary
     # carries eval + process-startup time that would poison the estimate.
+    #
+    # 🚨 并行训练不能用「相邻两局的间隔」估速度：5 个工兵会同一秒一起交局，
+    #    相邻 dt≈0 而 batch 差 5，算出来接近 0 → ETA 显示 0 小时。
+    #    改成整段吞吐：本轮跑过的局数 ÷ 本轮墙钟跨度。
     per_game = None
-    ts = [(g.get('batch'), g.get('t')) for g in games
-          if (g.get('t') or 0) >= run_start_t]
-    deltas = [ts[i][1] - ts[i - 1][1] for i in range(1, len(ts))
-              if ts[i][0] == ts[i - 1][0] + 1 and 0 < ts[i][1] - ts[i - 1][1] < 600]
-    if deltas:
-        per_game = statistics.median(deltas)
+    ts = sorted([(g.get('batch'), g.get('t')) for g in games
+                 if (g.get('t') or 0) >= run_start_t], key=lambda x: x[0])
+    if len(ts) >= 10:
+        n_span = ts[-1][0] - ts[0][0]
+        t_span = ts[-1][1] - ts[0][1]
+        if n_span > 0 and t_span > 0:
+            per_game = t_span / n_span
 
     eval_cost = None
     if eval_games:
