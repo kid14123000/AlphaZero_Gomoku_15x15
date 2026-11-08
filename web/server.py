@@ -401,6 +401,54 @@ class Handler(BaseHTTPRequestHandler):
             r['ok'] = True
             self._json(r)
             return
+        if u.path == '/api/games/values':
+            # 按指定权重重算某一局的逐步数值。
+            #   method=net  单次前向（快，~40ms/局）—— 网络直觉
+            #   method=mcts 每步跑 MCTS 取根 Q（慢，100 sims 约 7s/局 9×9）
+            # 用途：同一局换最新权重重算，比较「胜负分野」出现在第几手。
+            qs = parse_qs(u.query)
+            idx = (qs.get('idx') or [None])[0]
+            if idx is None:
+                self._err('缺少 idx')
+                return
+            g = _GAMES.get(idx)
+            if g is None:
+                self._err('棋谱不存在: idx=%s' % idx)
+                return
+            method = (qs.get('method') or ['net'])[0]
+            try:
+                sims = int((qs.get('sims') or ['100'])[0])
+            except ValueError:
+                sims = 100
+            sims = max(1, min(2000, sims))
+            model = (qs.get('model') or [None])[0]
+            t0 = time.time()
+            try:
+                import engine
+                if method == 'mcts':
+                    vals = engine.game_q_series(
+                        g.get('moves'), model_file=model, sims=sims,
+                        winner=g.get('winner'))
+                else:
+                    vals = engine.game_value_series(
+                        g.get('moves'), model_file=model,
+                        winner=g.get('winner'))
+            except Exception as exc:      # noqa: BLE001
+                self._send(500, json.dumps({'ok': False, 'error': str(exc)}))
+                return
+            self._json({
+                'ok': True,
+                'idx': g.get('idx'),
+                'batch': g.get('batch'),
+                'winner': g.get('winner'),
+                'method': method,
+                'sims': sims if method == 'mcts' else None,
+                'model': model or 'default',
+                'secs': round(time.time() - t0, 2),
+                'values': vals,
+                'divide': engine.find_divide(vals, g.get('winner')),
+            })
+            return
         if u.path == '/api/games/detail':
             qs = parse_qs(u.query)
             idx = (qs.get('idx') or [None])[0]
@@ -420,6 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                     import engine
                     g['values'] = engine.game_value_series(
                         g.get('moves'), winner=g.get('winner'))
+                    g['divide'] = engine.find_divide(g['values'], g.get('winner'))
                 except Exception as exc:      # noqa: BLE001  没权重时不影响棋谱浏览
                     g['values'] = []
                     g['values_error'] = str(exc)

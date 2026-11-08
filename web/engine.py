@@ -287,6 +287,100 @@ def game_value_series(moves, model_file=None, winner=None):
     return out
 
 
+def game_q_series(moves, model_file=None, sims=100, c_puct=5.0, winner=None):
+    """用 MCTS 搜索价值重算整局逐步 Q —— 和训练时 value 标签同口径。
+
+    与 game_value_series 的区别：
+      game_value_series  单次前向（干净、快，~1ms/步）—— 看网络「直觉」
+      game_q_series      每步跑 MCTS 再取根 Q（慢，9×9 上 100 sims ≈ 0.25s/步）
+                         —— 看「网络 + 搜索」合起来的判断力
+
+    用途：同一局棋谱，换最新权重重算一遍，比较「胜负分野」出现在第几手。
+    分野提前 ⇒ 网络更早看出走向；分野推后或消失 ⇒ 变钝了。
+
+    返回结构与 game_value_series 一致，另加 'source': 'mcts'。
+    """
+    try:
+        net = get_net(model_file)
+    except Exception:                       # noqa: BLE001
+        return []
+    b = make_board()
+    player = MCTSPlayer(net.policy_value_fn, c_puct=c_puct,
+                        n_playout=max(1, int(sims)), is_selfplay=1)
+    player.mcts.update_with_move(-1)
+
+    out = []
+    for i, mv in enumerate(moves or []):
+        try:
+            r, c = int(mv[0]), int(mv[1])
+        except (TypeError, IndexError, ValueError):
+            break
+        if not (0 <= r < HEIGHT and 0 <= c < WIDTH):
+            break
+        m = r * WIDTH + c
+        if m not in b.availables:
+            break
+        cur = b.current_player
+        try:
+            player.mcts.get_move_probs(b, temp=1.0)
+        except Exception:                   # noqa: BLE001
+            break
+        q = float(player.mcts.last_root_q)   # 已在 get_move_probs 里取负，= 该走方视角
+        black = 50.0 + 50.0 * q if cur == BLACK else 50.0 - 50.0 * q
+        # 网络给这步的先验概率，方便同屏对照
+        try:
+            probs, _v, legal = clean_eval(net, b)
+            prior = float(probs[m]) if m < len(probs) else None
+        except Exception:                   # noqa: BLE001
+            prior = None
+        out.append({
+            'n': i + 1, 'r': r, 'c': c, 'player': int(cur),
+            'value': round(q, 4),
+            'black_pct': round(black, 2),
+            'white_pct': round(100.0 - black, 2),
+            'prior': None if prior is None else round(prior, 4),
+            'net_best': None, 'is_best': False,
+            'source': 'mcts', 'sims': int(sims),
+        })
+        b.do_move(m)
+        player.mcts.update_with_move(m)
+
+    if winner in (1, 2, -1) and out:
+        bp = 100.0 if winner == 1 else (0.0 if winner == 2 else 50.0)
+        out.append({
+            'n': len(out) + 1, 'r': None, 'c': None, 'player': None,
+            'value': None, 'black_pct': bp, 'white_pct': 100.0 - bp,
+            'prior': None, 'net_best': None, 'is_best': False,
+            'terminal': True, 'source': 'mcts',
+        })
+    return out
+
+
+def find_divide(values, winner, thresh=70.0):
+    """胜负分野：胜率首次明确站到最终赢家一侧、且此后不再翻回对面的手数。
+
+    判据（对黑胜）：black_pct ≥ thresh，并且从该手到终局（不含 terminal）
+    再没有跌回 100-thresh 以下。
+    返回 {'n': 手数 or None, 'pct': 当时胜率, 'side': 'black'|'white'}。
+
+    为什么要求「此后不再翻回」：单点的尖峰不算分野，网络可能只是抖动。
+    """
+    seq = [v for v in (values or []) if not v.get('terminal') and
+           v.get('black_pct') is not None]
+    if not seq or winner not in (1, 2):
+        return {'n': None, 'pct': None, 'side': None}
+    lo, hi = 100.0 - thresh, thresh
+    for i, v in enumerate(seq):
+        bp = v['black_pct']
+        if winner == 1 and bp >= hi:
+            if all(x['black_pct'] >= lo for x in seq[i:]):
+                return {'n': v['n'], 'pct': bp, 'side': 'black'}
+        elif winner == 2 and bp <= lo:
+            if all(x['black_pct'] <= hi for x in seq[i:]):
+                return {'n': v['n'], 'pct': bp, 'side': 'white'}
+    return {'n': None, 'pct': None, 'side': None}
+
+
 def value_map(net, board):
     """价值热力图：在每个空点替当前方落一子，返回「落子后对走子方的期望胜率」。
 
