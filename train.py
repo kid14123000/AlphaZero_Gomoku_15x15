@@ -140,6 +140,51 @@ class TrainPipeline():
                                       c_puct=self.c_puct,
                                       n_playout=self.n_playout,
                                       is_selfplay=1)
+        # q/mix 模式：开跑前先验符号。反了就拒绝启动，别白跑几百局才发现。
+        if self.value_target in ('q', 'mix'):
+            self._selfcheck_q_sign()
+
+    def _selfcheck_q_sign(self):
+        """符号自检：构造「黑已四连、轮到黑、落子即成五」的必赢局面。
+
+        只有一条赢路时，MCTS 根 Q 必须显著为正（≈+1）。
+        符号反了会得到 ≈-1 —— 启动阶段就拦下来，代价 1 秒，
+        总好过 619 局（46 分钟）跑完才发现 value 标签全是反的。
+
+        局面（8 手，轮到黑）：
+            黑 (4,0)(4,1)(4,2)(4,3) 四连，两端只有 (4,4) 能成五
+            白 (0,0)(2,0)(4,6)(6,6) 四个散子，不构成威胁
+        """
+        b = Board(width=self.board_width, height=self.board_height,
+                  n_in_row=self.n_in_row)
+        b.init_board(0)
+        seq = [(4, 0), (0, 0), (4, 1), (2, 0), (4, 2), (4, 6), (4, 3), (6, 6)]
+        for r, c in seq:
+            m = r * self.board_width + c
+            if m not in b.availables:
+                raise RuntimeError('符号自检：构造局面时落点冲突 %s' % ((r, c),))
+            b.do_move(m)
+        if b.get_current_player() != b.players[0]:
+            raise RuntimeError('符号自检：局面轮次不对（应轮到黑先行方）')
+
+        probe = MCTSPlayer(self.policy_value_net.policy_value_fn,
+                           c_puct=self.c_puct,
+                           n_playout=max(200, self.n_playout // 2),
+                           is_selfplay=1)
+        probe.mcts.update_with_move(-1)
+        probe.mcts.get_move_probs(b, temp=1.0)
+        q = float(probe.mcts.last_root_q)
+
+        msg = ('符号自检：黑已四连且轮到黑，根 Q 应为正（≈+1），实测 %+.4f' % q)
+        if q < 0.0:
+            raise RuntimeError(
+                msg + '\n→ last_root_q 符号反了（根节点 _Q 需取负），'
+                      '拒绝启动。先跑 probe_q_sign.py 确认。')
+        if q < 0.5:
+            print('[warn] ' + msg + ' —— 偏低，MCTS 可能没搜到成五点，但不阻断启动',
+                  flush=True)
+        else:
+            print('[ok] ' + msg, flush=True)
 
     def get_equi_data(self, play_data):
         """augment the data set by rotation and flipping
