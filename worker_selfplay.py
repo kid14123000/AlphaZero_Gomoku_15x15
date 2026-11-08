@@ -50,6 +50,9 @@ def main():
     ap.add_argument('--n_playout', type=int, default=800)
     ap.add_argument('--temp', type=float, default=1.0)
     ap.add_argument('--c_puct', type=float, default=5.0)
+    ap.add_argument('--dirichlet_eps', type=float, default=0.25,
+                    help='自我对弈探索噪声权重 ε；上游 0.25，短局建议 0.10')
+    ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
     ap.add_argument('--device', default='cuda')
     ap.add_argument('--noise', type=float, default=0.0,
                     help='>0 时把每个 worker 的探索噪声强度错开（暂不使用）')
@@ -89,14 +92,17 @@ def main():
 
     cur_ver = read_version(args.sync)
     player = MCTSPlayer(net.policy_value_fn, c_puct=args.c_puct,
-                        n_playout=args.n_playout, is_selfplay=1)
+                        n_playout=args.n_playout, is_selfplay=1,
+                        dirichlet_eps=args.dirichlet_eps,
+                        dirichlet_alpha=args.dirichlet_alpha)
     board = Board(width=args.board, height=args.board, n_in_row=args.n_in_row)
     game = Game(board)
 
-    print('[w%d] 就绪  device=%s  par=%s  ver=%d'
+    print('[w%d] 就绪  device=%s  par=%s  ver=%d  sims=%d  eps=%.2f  alpha=%.2f'
           % (wid, 'cuda' if use_gpu else 'cpu',
              format(sum(p.numel() for p in net.policy_value_net.parameters()), ','),
-             cur_ver), flush=True)
+             cur_ver, args.n_playout, args.dirichlet_eps, args.dirichlet_alpha),
+          flush=True)
 
     seq = 0
     n_done = 0

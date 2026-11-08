@@ -63,6 +63,8 @@ def spawn(wid, args, logdir):
            '--n_in_row', str(args.n_in_row),
            '--n_playout', str(args.n_playout),
            '--temp', str(args.temp),
+           '--dirichlet_eps', str(args.dirichlet_eps),
+           '--dirichlet_alpha', str(args.dirichlet_alpha),
            '--device', 'cuda' if args.use_gpu else 'cpu']
     logf = open(os.path.join(logdir, 'worker_%d.log' % wid), 'a')
     p = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
@@ -150,6 +152,9 @@ def main():
     ap.add_argument('--n_in_row', type=int, default=5)
     ap.add_argument('--n_playout', type=int, default=800)
     ap.add_argument('--temp', type=float, default=1.0)
+    ap.add_argument('--dirichlet_eps', type=float, default=0.25,
+                    help='自我对弈探索噪声 ε（上游 0.25；9×9 短局建议 0.10）')
+    ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
     ap.add_argument('--game_batch_num', type=int, default=3000)
     ap.add_argument('--check_freq', type=int, default=50)
     ap.add_argument('--publish_every', type=int, default=8,
@@ -211,7 +216,9 @@ def main():
                value_target=args.value_target,
                batch_offset=args.batch_offset,
                init_lr_multiplier=args.init_lr_multiplier,
-               ckpt_dir=args.ckpt_dir)
+               ckpt_dir=args.ckpt_dir,
+               dirichlet_eps=args.dirichlet_eps,
+               dirichlet_alpha=args.dirichlet_alpha)
     if 'use_gpu' in inspect.signature(TrainPipeline.__init__).parameters:
         tkw['use_gpu'] = args.use_gpu
     trainer = TrainPipeline(**tkw)

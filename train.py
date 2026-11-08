@@ -58,7 +58,8 @@ class TrainPipeline():
                  batch_offset=0, init_lr_multiplier=1.0, ckpt_dir='checkpoints',
                  save_games=None, gate_step=200, gate_max=1200,
                  rapfi_bin=None, rapfi_depth=2, rapfi_every=0, rapfi_games=4,
-                 rapfi_who='absolute', eval_pure=0, value_target='z'):
+                 rapfi_who='absolute', eval_pure=0, value_target='z',
+                 dirichlet_eps=0.25, dirichlet_alpha=0.3):
         # params of the board and the game
         self.board_width = board_width
         self.board_height = board_height
@@ -96,6 +97,9 @@ class TrainPipeline():
         self.rapfi_who = rapfi_who
         # 对纯 MCTS 评估开关（0=关，默认）。饱和后只在白耗机时。
         self.eval_pure = int(eval_pure)
+        # 自我对弈探索噪声：上游 0.25/0.3。9×9 短局建议 0.10（实测探索手 28%→11%）
+        self.dirichlet_eps = float(dirichlet_eps)
+        self.dirichlet_alpha = float(dirichlet_alpha)
         # value 头的训练目标：z=最终胜负±1（原版），q=MCTS 根节点搜索价值（软标签），
         # mix=两者加权。q 能区分险胜/碾压，但早期网络弱时 Q 可能都接近 0，
         # 所以保留 z 档可随时回退。
@@ -139,7 +143,9 @@ class TrainPipeline():
         self.mcts_player = MCTSPlayer(self.policy_value_net.policy_value_fn,
                                       c_puct=self.c_puct,
                                       n_playout=self.n_playout,
-                                      is_selfplay=1)
+                                      is_selfplay=1,
+                                      dirichlet_eps=self.dirichlet_eps,
+                                      dirichlet_alpha=self.dirichlet_alpha)
         # q/mix 模式：开跑前先验符号。反了就拒绝启动，别白跑几百局才发现。
         if self.value_target in ('q', 'mix'):
             self._selfcheck_q_sign()
@@ -472,6 +478,9 @@ if __name__ == '__main__':
     parser.add_argument('--board_height', type=int, default=15)
     parser.add_argument('--n_in_row', type=int, default=5)
     parser.add_argument('--n_playout', type=int, default=400)
+    parser.add_argument('--dirichlet_eps', type=float, default=0.25,
+                        help='自我对弈探索噪声 ε（上游 0.25；9×9 短局建议 0.10）')
+    parser.add_argument('--dirichlet_alpha', type=float, default=0.3)
     parser.add_argument('--game_batch_num', type=int, default=1500)
     parser.add_argument('--check_freq', type=int, default=50)
     parser.add_argument('--play_batch_size', type=int, default=1)
@@ -539,5 +548,7 @@ if __name__ == '__main__':
                                       value_target=args.value_target,
                                       batch_offset=args.batch_offset,
                                       init_lr_multiplier=args.init_lr_multiplier,
-                                      ckpt_dir=args.ckpt_dir)
+                                      ckpt_dir=args.ckpt_dir,
+                                      dirichlet_eps=args.dirichlet_eps,
+                                      dirichlet_alpha=args.dirichlet_alpha)
     training_pipeline.run()
