@@ -418,7 +418,8 @@ class Handler(BaseHTTPRequestHandler):
             if want not in ('0', 'false', 'no'):
                 try:
                     import engine
-                    g['values'] = engine.game_value_series(g.get('moves'))
+                    g['values'] = engine.game_value_series(
+                        g.get('moves'), winner=g.get('winner'))
                 except Exception as exc:      # noqa: BLE001  没权重时不影响棋谱浏览
                     g['values'] = []
                     g['values_error'] = str(exc)

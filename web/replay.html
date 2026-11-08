@@ -383,20 +383,22 @@ function renderMoveList() {
 let valChart = null;
 
 function renderValueChart() {
-  const vals = (g && g.values) || [];
+  const all = (g && g.values) || [];
+  // terminal 点是终局真相，不参与「最高/最低」统计（否则恒为 0/100）
+  const vals = all.filter(v => !v.terminal);
   const meta = $('valMeta');
   if (meta) {
     meta.textContent = vals.length
-      ? `${vals.length} 步 · 最高 ${Math.max(...vals.map(v => v.black_pct)).toFixed(0)}% / 最低 ${Math.min(...vals.map(v => v.black_pct)).toFixed(0)}%`
+      ? `${vals.length} 步 · 黑胜率 ${Math.min(...vals.map(v => v.black_pct)).toFixed(0)}%~${Math.max(...vals.map(v => v.black_pct)).toFixed(0)}%`
       : (g ? '无数据' : '选一局后显示');
   }
-  if (!vals.length) {
+  if (!all.length) {
     if (valChart) { valChart.destroy(); valChart = null; }
     return;
   }
-  const labels = vals.map(v => v.n);
-  const black = vals.map(v => v.black_pct);
-  const white = vals.map(v => v.white_pct);
+  const labels = all.map(v => v.n);
+  const black = all.map(v => (v.terminal ? null : v.black_pct));
+  const white = all.map(v => (v.terminal ? null : v.white_pct));
   const cursor = cur > 0 ? cur : null;
   if (!valChart) {
     valChart = new Chart($('c-value').getContext('2d'), {
@@ -438,6 +440,10 @@ function renderValueChart() {
     });
   }
   valChart.data.labels = labels;
+  // ⚠️ 必须用 all 判断，不能用上面过滤过的 vals —— vals 里已经没有 terminal 点了
+  const terminalIdx = (all.length && all[all.length - 1].terminal)
+    ? all.length - 1 : -1;
+  const termData = labels.map((_, i) => (i === terminalIdx ? all[i].black_pct : null));
   valChart.data.datasets = [
     {label: '黑胜率', data: black, borderColor: '#60a5fa', borderWidth: 2,
      pointRadius: 0, pointHoverRadius: 4, tension: .25},
@@ -449,6 +455,10 @@ function renderValueChart() {
     {label: '当前手', data: labels.map(n => (cursor && n === cursor ? 100 : null)),
      borderColor: '#38bdf8', backgroundColor: '#38bdf8', borderWidth: 2,
      pointRadius: 0, fill: false},
+    // 终局真相：一个孤立红点，网络估值离它多远一眼可见
+    {label: '终局结果', data: termData, borderColor: '#ef4444',
+     backgroundColor: '#ef4444', borderWidth: 0, pointRadius: 5,
+     pointStyle: 'rectRot', showLine: false},
   ];
   valChart.update('none');
 }
@@ -469,6 +479,16 @@ function renderValueNow(n) {
   }
   const v = vals[n - 1];
   if (!v) { box.innerHTML = '<div class="empty">—</div>'; return; }
+  if (v.terminal) {
+    const r = v.black_pct >= 50 ? '黑胜' : '白胜';
+    box.innerHTML = `
+      <div class="big" style="font-size:1.5rem">${r}</div>
+      <div class="sub">终局 · 共 ${g.moves.length} 手</div>
+      <div class="sub">黑胜率 <b>${v.black_pct.toFixed(0)}%</b> / 白 <b>${v.white_pct.toFixed(0)}%</b></div>
+      <div class="sub" style="color:#94a3b8">对照上面曲线最后一步网络的估值，
+        差多少就是网络在收官阶段的误差</div>`;
+    return;
+  }
   const side = v.player === 1 ? '⚫ 黑' : '⚪ 白';
   const lead = v.black_pct >= 50
     ? `<span style="color:#60a5fa">黑领先 ${(v.black_pct - 50).toFixed(1)}</span>`

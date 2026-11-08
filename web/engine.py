@@ -213,7 +213,7 @@ def clean_eval(net, board):
 # ─────────────────────────────────────────────────────────────
 # 棋谱逐步数值
 # ─────────────────────────────────────────────────────────────
-def game_value_series(moves, model_file=None):
+def game_value_series(moves, model_file=None, winner=None):
     """给一局棋谱的每一步算数值，供回放页显示「这一步双方胜率多少」。
 
     对每个局面在该步落子**之前**做一次干净前向（不走搜索、不加噪声）：
@@ -222,6 +222,11 @@ def game_value_series(moves, model_file=None):
       - net_best 网络自己会走哪一步（用于对比「AI 想下」和「实际下了」）
 
     黑胜率换算：黑该走时 = 50+50v，白该走时 = 50-50v（v 是执子方视角）。
+
+    若传入 winner（1 黑 / 2 白 / -1 和），末尾额外追加一个 terminal 点，
+    表示「终局真相」——网络最后一步的估值可以直接和它对照，
+    一眼看出网络在收官阶段估得准不准。终端点的 n = 手数+1。
+
     9×9 小网每步约 1ms，一局 40 手总共 ~40ms，可以随详情接口一起返回。
     """
     try:
@@ -264,6 +269,21 @@ def game_value_series(moves, model_file=None):
             'is_best': bool(best is not None and best[0] == r and best[1] == c),
         })
         b.do_move(m)
+    # 终局真相点：让曲线收口到真实结果，方便对照网络最后一步的估值
+    if winner in (1, 2, -1) and out:
+        bp = 100.0 if winner == 1 else (0.0 if winner == 2 else 50.0)
+        out.append({
+            'n': len(out) + 1,
+            'r': None, 'c': None,
+            'player': None,
+            'value': None,
+            'black_pct': bp,
+            'white_pct': 100.0 - bp,
+            'prior': None,
+            'net_best': None,
+            'is_best': False,
+            'terminal': True,
+        })
     return out
 
 
