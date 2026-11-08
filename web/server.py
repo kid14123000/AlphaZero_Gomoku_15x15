@@ -213,10 +213,15 @@ def build_payload(path, window=20):
     # rolling black / white win rate (draws excluded from the denominator).
     # With fewer than MIN_N games in the window the estimate is pure noise
     # (1 game => 0% or 100%), so emit null and let the chart start later.
-    MIN_N = 5
+    #
+    # 🚨 图表滚动窗口（ROLL）和「近 N 局」KPI（window=20）是两回事：
+    #    20 局滚动在 1 万局的跨度上锯齿太密，趋势被噪声吃掉，所以图表用 100 局。
+    #    但均手 KPI 卡仍要「近 20 局」—— 那是看当下的短期手感，取 100 会变迟钝。
+    ROLL = 100
+    MIN_N = max(5, ROLL // 4)        # 保持原来的 25% 门槛，避免小样本算出 0%/100%
     bwr_roll, wwr_roll, len_roll = [], [], []
     for i in range(len(games)):
-        lo = max(0, i - window + 1)
+        lo = max(0, i - ROLL + 1)
         chunk = games[lo:i + 1]
         nb = sum(1 for g in chunk if g.get('winner') == 1)
         nw = sum(1 for g in chunk if g.get('winner') == 2)
@@ -343,6 +348,7 @@ def build_payload(path, window=20):
         'len_roll': len_roll,
         'black_wr_roll': bwr_roll,
         'white_wr_roll': wwr_roll,
+        'roll_window': ROLL,
         'updates': [{'batch': u['batch'], 'loss': round(u['loss'], 4),
                      'entropy': round(u['entropy'], 4), 'kl': round(u['kl'], 5),
                      'lr_multiplier': round(u['lr_multiplier'], 3),

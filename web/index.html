@@ -129,12 +129,12 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
 
 <div class="row">
   <div class="chartcard" style="flex:1.12">
-    <div class="card-title">每局步长趋势 <span class="t2">20 局滚动均值</span></div>
+    <div class="card-title">每局步长趋势 <span class="t2" id="t-lenroll">100 局滚动均值</span></div>
     <div class="hint">掉下来 = 开始速胜；长期贴近 130+ = 还在缠斗或走向和棋</div>
     <div class="chartbox tall"><canvas id="c-len"></canvas></div>
   </div>
   <div class="chartcard">
-    <div class="card-title">黑白胜率（20 局滚动）<span class="t2">和棋不计入分母</span></div>
+    <div class="card-title">黑白胜率 <span class="t2" id="t-wrroll">100 局滚动 · 和棋不计入分母</span></div>
     <div class="hint">黑 = 先手（player1）。距 50% 越远 = 先手红利越大</div>
     <div class="chartbox tall"><canvas id="c-wr"></canvas></div>
   </div>
@@ -303,10 +303,16 @@ function render(d){
   const games = d.games || [], updates = d.updates || [], evals = d.evals || [];
 
   // 步长
-  // 只画 20 局滚动均值：单局散点在 1000+ 局时糊成一片，把趋势线埋了
+  // 只画滚动均值：单局散点在 1000+ 局时糊成一片，把趋势线埋了
+  // 窗口由后端给（d.roll_window，默认 100）——20 局在万局跨度上锯齿太密
+  const ROLL = d.roll_window || 100;
   if (!charts.len) charts.len = mkChart('c-len');
+  const tLen = document.getElementById('t-lenroll');
+  if (tLen) tLen.textContent = ROLL + ' 局滚动均值';
+  const tWr = document.getElementById('t-wrroll');
+  if (tWr) tWr.textContent = ROLL + ' 局滚动 · 和棋不计入分母';
   charts.len.data.datasets = [
-    LN('20 局滚动均值', COL.sky,
+    LN(ROLL + ' 局滚动均值', COL.sky,
        C(games.map((g,i) => ({x:g[0], y:(d.len_roll||[])[i]}))), {borderWidth:2.2})
   ];
   charts.len.update('none');
