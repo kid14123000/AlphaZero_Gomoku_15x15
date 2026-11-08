@@ -90,7 +90,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
     <div class="sub" id="k-prog">—</div>
   </div>
   <div class="card">
-    <div class="card-title">黑白胜率</div>
+    <div class="card-title">黑白胜率 <span class="t2" id="k-wrtitle">近 100 局</span></div>
     <div class="big"><span class="wr-black" id="k-bwr">—</span><span class="big-unit">/</span>
       <span class="wr-white" id="k-wwr">—</span></div>
     <div class="sub" id="k-wrsub">—</div>
@@ -548,10 +548,17 @@ function renderKpis(d){
     (evalOffK ? ''
       : (s.eval_cost ? ` · 每次评估 ≈ <b>${hm(s.eval_cost)}</b>` : ''));
 
-  document.getElementById('k-bwr').textContent = F(m.black_wr, 1) + '%';
-  document.getElementById('k-wwr').textContent = F(m.white_wr, 1) + '%';
-  document.getElementById('k-wrsub').innerHTML =
-    `黑 <b>${m.black_wins}</b> · 白 <b>${m.white_wins}</b> · 和 <b>${m.ties}</b>`;
+  // 黑白胜率：主数字用近 100 局（全量会被历史锁死），副标题给近 100 计数 + 全量参考
+  const lb = m.last_black_wr, lw = m.last_white_wr;
+  const useLast = (lb !== null && lb !== undefined);
+  document.getElementById('k-bwr').textContent = F(useLast ? lb : m.black_wr, 1) + '%';
+  document.getElementById('k-wwr').textContent = F(useLast ? lw : m.white_wr, 1) + '%';
+  document.getElementById('k-wrtitle').textContent =
+    '近 ' + (m.wr_window ?? 100) + ' 局';
+  document.getElementById('k-wrsub').innerHTML = useLast
+    ? `黑 <b>${m.last_black_wins}</b> · 白 <b>${m.last_white_wins}</b> · 和 <b>${m.last_ties}</b>` +
+      `<br>全量 ${F(m.black_wr,1)}% / ${F(m.white_wr,1)}%`
+    : `黑 <b>${m.black_wins}</b> · 白 <b>${m.white_wins}</b> · 和 <b>${m.ties}</b>`;
 
   document.getElementById('k-len').textContent = F(m.len_avg_last, 1);
   document.getElementById('k-lensub').innerHTML =

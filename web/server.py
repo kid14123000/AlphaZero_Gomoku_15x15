@@ -186,6 +186,14 @@ def build_payload(path, window=20):
     last = games[-window:] if games else []
     lens_last = [g.get('episode_len', 0) for g in last]
 
+    # 近 N 局胜率。全量胜率在长跑里被历史锁死（12000 局时永远停在 62%），
+    # 看不出「现在」的棋力，所以 KPI 卡改用近 100 局；全量留作副标题参考。
+    wr_win = min(100, played)
+    wl = games[-wr_win:] if games else []
+    wcw = Counter(g.get('winner') for g in wl)
+    wr_black, wr_white, wr_tie = wcw.get(1, 0), wcw.get(2, 0), wcw.get(-1, 0)
+    wr_decided = wr_black + wr_white
+
     # 风格指标: 快攻局 = N 手以内解决（黑/白各自计数）
     # 🚨 阈值不能写死 40：9×9 均手只有 18，40 手等于「全部对局」，
     #    覆盖率恒在 98%+，完全没有区分度（9×9 五连理论最短 9 手）。
@@ -305,6 +313,12 @@ def build_payload(path, window=20):
             'ties': tie,
             'black_wr': round(100.0 * black / decided, 2) if decided else None,
             'white_wr': round(100.0 * white / decided, 2) if decided else None,
+            'wr_window': wr_win,
+            'last_black_wins': wr_black,
+            'last_white_wins': wr_white,
+            'last_ties': wr_tie,
+            'last_black_wr': round(100.0 * wr_black / wr_decided, 2) if wr_decided else None,
+            'last_white_wr': round(100.0 * wr_white / wr_decided, 2) if wr_decided else None,
             'tie_rate': round(100.0 * tie / played, 2) if played else None,
             'len_avg': round(mean(lens), 2) if lens else None,
             'len_median': statistics.median(lens) if lens else None,
