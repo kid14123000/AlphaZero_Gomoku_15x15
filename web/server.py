@@ -203,7 +203,7 @@ def build_payload(path, window=20):
         _bw = int(str(start.get('board') or '15x15').split('x')[0])
     except ValueError:
         pass
-    FAST = 12 if _bw <= 11 else 40
+    FAST = 12 if _bw <= 11 else 20
     fast_black = sum(1 for g in games
                      if g.get('winner') == 1 and g.get('episode_len', 999) <= FAST)
     fast_white = sum(1 for g in games

@@ -74,7 +74,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
 </div>
 
 <h1><span id="h1pre">⚫ 15×15 五子棋</span>训练
-  <span class="badge" style="background:#0c2a3f;color:#7dd3fc;border:1px solid #0ea5e9;margin-left:6px">v4 · V24Net 2.5M · value=q</span>
+  <span class="badge" id="verbadge" style="background:#0c2a3f;color:#7dd3fc;border:1px solid #0ea5e9;margin-left:6px">v4 · V24Net 2.5M</span>
   <span class="badge stop" id="status"><span class="d"></span>连接中…</span>
   <small id="cfg"></small></h1>
 <div class="hdr">
@@ -664,6 +664,11 @@ async function tick(manual){
       `${boardTxt} · ${rowTxt} · ${c.n_playout ?? '?'} playouts · batch ${c.batch_size ?? '?'} · ` +
       (evalOff2 ? `每 ${c.check_freq ?? '?'} 代存档（不做纯MCTS评估）`
                 : `每 ${c.check_freq ?? '?'} 代评估`);
+    const vbEl = document.getElementById('verbadge');
+    if (vbEl) {
+      const vt = c.value_target || 'z';
+      vbEl.textContent = `v4 · V24Net 2.5M · value=${vt === 'z' ? 'z ±1' : vt}`;
+    }
     const lastEval = (d.evals && d.evals.length) ? d.evals[d.evals.length - 1] : null;
     const oppPo = lastEval && lastEval.pure_playout != null ? lastEval.pure_playout : (c.pure_mcts_playout_num ?? '?');
     document.getElementById('cfg2').innerHTML = evalOff2
