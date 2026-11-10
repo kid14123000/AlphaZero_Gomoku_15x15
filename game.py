@@ -4,6 +4,7 @@
 """
 
 from __future__ import print_function
+import math
 import numpy as np
 
 
@@ -206,11 +207,13 @@ class Game(object):
         states, mcts_probs, current_players = [], [], []
         qs = [] if collect_q else None
         while True:
-            # 温度调度：已走手数（len(states)）还没到 temp_switch 就用 temp 探索，
-            # 之后切成 temp_after（近似 argmax）。第 4 手时 len(states)==3 已达标。
-            _t = temp
-            if temp_after is not None and len(states) >= temp_switch:
-                _t = temp_after
+            # [v24 同款] 温度调度：前 4 手 1.0，之后指数衰减，地板 0.05
+            # 对应 v24: step<4 → 1.00 | 8→0.61 | 12→0.37 | 16→0.22 | 24→0.08 | ≥28→0.05
+            _n = len(states)
+            if _n < 4:
+                _t = 1.0
+            else:
+                _t = max(0.05, math.exp(-(_n - 4) / 8.0))
             move, move_probs = player.get_action(self.board,
                                                  temp=_t,
                                                  return_prob=1)
