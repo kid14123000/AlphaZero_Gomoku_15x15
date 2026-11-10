@@ -29,7 +29,7 @@ class ResidualBlock(nn.Module):
 
 
 class V24Net(nn.Module):
-    def __init__(self, board_size=15, conv_channels=128, residual_blocks=8):
+    def __init__(self, board_size=15, board_height=None, conv_channels=128, residual_blocks=8):
         super().__init__()
         self.board_size = board_size
         n = board_size

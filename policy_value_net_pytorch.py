@@ -12,6 +12,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+from net_v24 import V24Net   # v2: v24 同构网络（128ch + 8 残差 + BN）
 
 
 def set_learning_rate(optimizer, lr):
@@ -67,14 +68,19 @@ class PolicyValueNet():
         self.l2_const = 1e-4  # coef of l2 penalty
         # the policy value net module
         if self.use_gpu:
-            self.policy_value_net = Net(board_width, board_height).cuda()
+            self.policy_value_net = V24Net(board_width, board_height).cuda()
         else:
-            self.policy_value_net = Net(board_width, board_height)
+            self.policy_value_net = V24Net(board_width, board_height)
         self.optimizer = optim.Adam(self.policy_value_net.parameters(),
                                     weight_decay=self.l2_const)
 
         if model_file:
-            net_params = torch.load(model_file)
+            # 🚨 服务器(CUDA)存的权重在本机(CPU)读要 map_location，否则 RuntimeError
+            net_params = torch.load(
+                model_file,
+                map_location=None if self.use_gpu else torch.device('cpu'))
+            if isinstance(net_params, dict) and 'state_dict' in net_params:
+                net_params = net_params['state_dict']
             self.policy_value_net.load_state_dict(net_params)
 
     def policy_value(self, state_batch):
@@ -82,6 +88,8 @@ class PolicyValueNet():
         input: a batch of states
         output: a batch of action probabilities and state values
         """
+        self.policy_value_net.eval()
+        state_batch = np.asarray(state_batch, dtype=np.float32)
         if self.use_gpu:
             state_batch = Variable(torch.FloatTensor(state_batch).cuda())
             log_act_probs, value = self.policy_value_net(state_batch)
@@ -101,6 +109,7 @@ class PolicyValueNet():
         action and the score of the board state
         """
         legal_positions = board.availables
+        self.policy_value_net.eval()
         current_state = np.ascontiguousarray(board.current_state().reshape(
                 -1, 4, self.board_width, self.board_height))
         if self.use_gpu:
@@ -119,6 +128,11 @@ class PolicyValueNet():
     def train_step(self, state_batch, mcts_probs, winner_batch, lr):
         """perform a training step"""
         # wrap in Variable
+        self.policy_value_net.train()      # v2: BN 训练模式
+        state_batch = np.asarray(state_batch, dtype=np.float32)
+        mcts_probs = np.asarray(mcts_probs, dtype=np.float32)
+        winner_batch = np.asarray(winner_batch, dtype=np.float32)
+
         if self.use_gpu:
             state_batch = Variable(torch.FloatTensor(state_batch).cuda())
             mcts_probs = Variable(torch.FloatTensor(mcts_probs).cuda())
