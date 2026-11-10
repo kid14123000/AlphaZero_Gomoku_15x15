@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>15×15 五子棋 · 训练看板</title>
+<title>v4 · 15×15 五子棋 · 训练看板</title>
 <script src="/static/chart.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -74,6 +74,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
 </div>
 
 <h1><span id="h1pre">⚫ 15×15 五子棋</span>训练
+  <span class="badge" style="background:#0c2a3f;color:#7dd3fc;border:1px solid #0ea5e9;margin-left:6px">v4 · V24Net 2.5M · value=q</span>
   <span class="badge stop" id="status"><span class="d"></span>连接中…</span>
   <small id="cfg"></small></h1>
 <div class="hdr">
@@ -578,7 +579,10 @@ function renderKpis(d){
     ? `天元局 <b>${wc.n}</b> 局（占 ${F(wc.share,0)}%）· 贴身率 <b>${F(wc.contact_rate,1)}%</b><br>` +
       `跑远≥4格 <b>${F(wc.far_rate,1)}%</b> · 白抢中心率 <b>${F(wo2.grab_rate ?? 0,1)}%</b><br>` +
       `白2距黑 <b>${F(wc.w2d_median,1)}</b> · 分散度 <b>${F(wc.spread,2)}</b>`
-    : '尚无棋谱（--save-games 开启后累计）';
+    : (m.games
+        ? `天元局 <b>0</b> 局：本线黑 1 从不走天元<br>` +
+          `非天元局 <b>${wo2.n ?? 0}</b> 局 · 白抢天元率 <b>${F(wo2.grab_rate ?? 0,1)}%</b>`
+        : '尚无棋谱（--save-games 开启后累计）');
 
   document.getElementById('k-loss').textContent = F(m.loss_last, 3);
   document.getElementById('k-losssub').innerHTML =
@@ -655,7 +659,7 @@ async function tick(manual){
     }
     document.getElementById('h1pre').textContent = `⚫ ${boardTxt || '15×15'} ` +
       (nRow === 4 ? '四连' : nRow === 5 ? '五子棋' : '棋');
-    document.title = `${boardTxt || '15×15'} ${nRow === 4 ? '四连' : '五子棋'} · 训练看板`;
+    document.title = `v4 · ${boardTxt || '15×15'} ${nRow === 4 ? '四连' : '五子棋'} · 训练看板`;
     document.getElementById('cfg').textContent =
       `${boardTxt} · ${rowTxt} · ${c.n_playout ?? '?'} playouts · batch ${c.batch_size ?? '?'} · ` +
       (evalOff2 ? `每 ${c.check_freq ?? '?'} 代存档（不做纯MCTS评估）`
