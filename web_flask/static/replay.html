@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
+<script>window.__errs=[];window.addEventListener('error',function(e){window.__errs.push((e.message||'')+' @line'+e.lineno+':'+e.colno)});</script>
 <script src="/static/chart.min.js"></script>
 <!-- 活跃槽(同步注入): 版本表默认值随槽切换, 换轮不用改本页 (2026-09-27) -->
 <script src="/api/slot.js"></script>
@@ -241,7 +242,7 @@ const API = '';
 //   普通自对弈线 (v36 及以前) 无教练 → 白胜率就是白胜率
 const VERS = [['v42', 'v42 (教练法+自动换边: 学生达标即换边冻结为新教练, 颜色动态; 阈值55%·连续2代)', {coach:'黑', student:'白', goal:55}],
               ['v41', 'v41 = v40 + 梯度检查点(省显存); 单通道纯自对弈·无教练, 白胜率=指标; 30%=失衡线下限', {coach:null, student:'白', goal:30}],
-              ['v40', 'v40 (单通道版·按v1重建: 纯自对弈无教练, 白胜率=指标; 30%=失衡线下限)', {coach:null, student:'白', goal:30}],,
+              ['v40', 'v40 (单通道版·按v1重建: 纯自对弈无教练, 白胜率=指标; 30%=失衡线下限)', {coach:null, student:'白', goal:30}],
               ['v39', 'v39 (R6: 教练执白 v38 it117, 学生练黑, 黑胜率=主指标, 目标80%)', {coach:'白', student:'黑', goal:80}],
               ['v38r4', 'v38·R5 (教练=v39 it96 教白棋, 白方收官 55.0%)', {coach:'黑', student:'白', goal:55}],
               ['v38', 'v38 (R5 槽目录: 教练执黑, 学生练白, 白胜率=主指标, 目标55%)', {coach:'黑', student:'白', goal:55}],
@@ -257,11 +258,26 @@ const VERS = [['v42', 'v42 (教练法+自动换边: 学生达标即换边冻结�
   const S = window.ACTIVE_SLOT || {};
   if (!S.slot) return;
   const i = VERS.findIndex(x => x[0] === S.slot);
-  if (i > 0) VERS.unshift(VERS.splice(i, 1)[0]);
+  // 🚨 活跃槽不在硬编码列表里时（如本地 v4），必须【新增】一条并插到最前。
+  //    原来只做「已存在则前移」，slot=v4 时 findIndex=-1 → VER 落到列表第一条
+  //    （v39r4）→ 请求 /api/replay/index?version=v39r4 → 后端无该目录 →
+  //    页面报「无本地数据」且「代/局」下拉全空。
+  if (i < 0) {
+    VERS.unshift([S.slot, `${S.slot} (本地线)`, null]);
+  } else if (i > 0) {
+    VERS.unshift(VERS.splice(i, 1)[0]);
+  }
   const st = S.student_name || '?', co = S.coach_name || '?';
   const g = Math.round((S.goal || 0) * 100);
-  VERS[0][1] = `${S.slot} (主线 · 第${S.round || '?'}轮: 教练执${co} 教${st}棋, ${st}胜率=主指标, 目标${g}%)`;
-  VERS[0][2] = { coach: co, student: st, goal: g };
+  if (!S.coach_name) {
+    // 无教练线（本地 v4 这种纯自对弈）：别硬套「教练执X教Y棋」的模板，
+    // 否则标题会变成「教练执? 教白棋」，误导读者以为有双槽机制。
+    VERS[0][1] = `${S.slot} (主线 · 纯自对弈, 无教练)`;
+    VERS[0][2] = null;
+  } else {
+    VERS[0][1] = `${S.slot} (主线 · 第${S.round || '?'}轮: 教练执${co} 教${st}棋, ${st}胜率=主指标, 目标${g}%)`;
+    VERS[0][2] = { coach: co, student: st, goal: g };
+  }
 })();
 const MAIN_VER = VERS[0][0];
 // 当前所选版本的口径 (= null 表示普通自对弈线)

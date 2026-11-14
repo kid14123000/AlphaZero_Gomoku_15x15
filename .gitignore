@@ -37,3 +37,7 @@ combat_cache.json
 Thumbs.db
 *.swp
 *~
+
+# ── 回放索引（tools/build_replay_index.py 生成，125MB+，随时可重建）──
+gomoku_checkpoints/worker_data/
+gomoku_checkpoints/replay_pool_index.json

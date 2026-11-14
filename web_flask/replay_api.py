@@ -33,6 +33,13 @@ def _ver_paths(version):
       → 主目录不在就回退最新的 <槽>_round* (只读, 不会混写)
     """
     d = os.path.join(PROJ, f'gomoku_checkpoints_{version}')
+    # 🚨 本地 v4 的权重目录没有版本后缀（就是 gomoku_checkpoints/），
+    #    回放数据也放在它的 worker_data/ 下；不为它再造一个空壳目录，
+    #    否则 /api/weights 和回放页会各看一个目录、互相打脸。
+    if not os.path.isdir(d):
+        alt = os.path.join(PROJ, 'gomoku_checkpoints')
+        if os.path.isdir(alt):
+            d = alt
     if not os.path.isdir(d):
         import glob as _glob, re as _re
         cands = []
