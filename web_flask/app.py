@@ -4894,6 +4894,15 @@ def build_local_train_cache():
     its = [int(u.get('batch') or 0) for u in updates]
     tot = [round(float(u.get('loss') or 0), 4) for u in updates]
 
+    # ── v4 真实指标（局数/吞吐/loss/entropy/黑白胜率/防守率/均手数）────────────
+    # 老的 代/教练/门控 那套在单网自对弈里根本不存在，前端只用这个块。
+    v4 = None
+    try:
+        import v4_metrics
+        v4 = v4_metrics.collect(PARENT_DIR)
+    except Exception as e:
+        print(f'[dashboard] v4 指标收集失败: {e}')
+
     return {
         'time': _t.strftime('%H:%M:%S'),
         'train_version': TRAIN_VERSION,
@@ -4918,6 +4927,7 @@ def build_local_train_cache():
         'loss_compare': {},
         'kpi': {'student_name': '黑/白(单网双色)', 'coach_name': '—',
                 'goal': 0.0, 'note': 'v4 本地自对弈线'},
+        'v4': v4,
         'local': True,
         'ssh_ok': True,
     }
@@ -4941,6 +4951,24 @@ def api_training():
     except Exception as e:
         print(f'[api/training] 拉取失败: {e}')
     return jsonify(dict(TRAIN_CACHE))
+
+
+@app.route('/api/v4_log')
+@require_auth
+def api_v4_log():
+    """训练日志尾部（v4：logs/train_v4.log）。只读最后 N 行，不解析。"""
+    n = min(400, max(10, int(request.args.get('n') or 80)))
+    path = os.environ.get('GOMOKU_TRAIN_LOG') or os.path.join(PARENT_DIR, 'logs', 'train_v4.log')
+    try:
+        with open(path, 'rb') as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            back = min(size, 65536)
+            f.seek(size - back)
+            lines = f.read().decode('utf-8', 'ignore').splitlines()
+        return jsonify({'ok': True, 'lines': lines[-n:], 'path': path})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)})
 
 
 @app.route('/dashboard')
