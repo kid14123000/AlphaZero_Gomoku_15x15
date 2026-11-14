@@ -205,9 +205,80 @@ def _version_dir(dirname):
     return d
 
 
+# ── 权重实时同步：让页面的「代」下拉自动跟上训练 (2026-11-14) ──────────────
+# 训练每 50 局往 checkpoints/ 写一个 ckpt_itN.model；web 读的是 gomoku_checkpoints/
+# 下那套 weights_itN.pt。这套符号链接原本是建站时一次性做的 ⇒ 训练往后跑它就冻结了，
+# 页面永远停在当时的最后一根（实测卡在 it13051，训练已经到 it13256，落后 4 代且会越落越远）。
+# 现在每次 scan_weights() 之前做一次幂等补链：只补缺失的，绝不改动已有的链接。
+LIVE_CKPT_DIR = os.path.join(PARENT_DIR, 'checkpoints')
+_LINK_SYNC_TS = [0.0]
+_LINK_SYNC_TTL = 10.0    # 秒。页面 25s 轮询一次，这里再兜一层，避免每请求都扫目录
+_CKPT_SETTLE = 20.0      # 秒。太新的 ckpt 可能还在 torch.save 写盘中，先不链，免得读到半个文件
+
+
+def refresh_weight_links(force=False):
+    """把 checkpoints/ckpt_itN.model 增量补成 gomoku_checkpoints/weights_itN.pt。
+    幂等、只增不改；顺带让 weights.pt（「最新权重」）指向最新一代。返回新建条数。"""
+    now = time.time()
+    if not force and now - _LINK_SYNC_TS[0] < _LINK_SYNC_TTL:
+        return 0
+    _LINK_SYNC_TS[0] = now
+    if not os.path.isdir(LIVE_CKPT_DIR):
+        return 0
+
+    made = 0
+    newest_it, newest_f = -1, None
+    try:
+        names = os.listdir(LIVE_CKPT_DIR)
+    except OSError:
+        return 0
+    for f in names:
+        if not (f.startswith('ckpt_it') and f.endswith('.model')):
+            continue
+        try:
+            it = int(f[len('ckpt_it'):-len('.model')])
+        except ValueError:
+            continue
+        if it > newest_it:
+            newest_it, newest_f = it, f
+
+        link = os.path.join(CHECKPOINT_DIR, 'weights_it%d.pt' % it)
+        if os.path.lexists(link):
+            continue
+        src = os.path.join(LIVE_CKPT_DIR, f)
+        try:
+            if now - os.path.getmtime(src) < _CKPT_SETTLE:
+                continue                      # 可能还在写盘
+            if os.path.getsize(src) == 0:
+                continue                      # 空文件（写了一半）
+            os.symlink(os.path.join('..', 'checkpoints', f), link)
+            made += 1
+        except OSError:
+            pass                              # 并发建链 / 跨设备，忽略即可
+
+    # 「最新权重」跟随最新一代；仍在写盘的最新代先不追
+    wp = os.path.join(CHECKPOINT_DIR, 'weights.pt')
+    if newest_f:
+        try:
+            src = os.path.join(LIVE_CKPT_DIR, newest_f)
+            if now - os.path.getmtime(src) >= _CKPT_SETTLE:
+                cur = os.readlink(wp) if os.path.islink(wp) else None
+                if cur is None or not cur.endswith(newest_f):
+                    tmp = wp + '.tmp'
+                    if os.path.lexists(tmp):
+                        os.remove(tmp)
+                    os.symlink(os.path.join('..', 'checkpoints', newest_f), tmp)
+                    os.replace(tmp, wp)       # 原子替换，读到的永远是完整链接
+        except OSError:
+            pass
+
+    return made
+
+
 def scan_weights():
     """扫描所有版本目录（v1/v2/v3/v6）下的权重文件（仅 PyTorch 格式）
     排序: 版本 + 迭代号数字序 (it9 < it90 < it91), 修复字典序 bug (it100 < it2)"""
+    refresh_weight_links()        # ★ 每次列权重前先补链，页面才能看到训练新产出的代
     weights = []
     for version, dirname, _, disp in VERSIONS:
         d = _version_dir(dirname)          # ★ 归档回退 (2026-10-01)
@@ -983,13 +1054,21 @@ def index():
 def api_weights():
     meta = load_metadata()
     default_sim = meta.get('config', {}).get('sim_count', 50)
+    # ?refresh=1：手动点「刷新」时强制补链（绕过 10s 节流）
+    made = refresh_weight_links(force=bool(request.args.get('refresh')))
+    ws = scan_weights()
+    newest = max((_iter_num(w['file']) for w in ws if w['file'] != 'weights.pt'), default=-1)
     return jsonify({
-        'weights': scan_weights(),
+        'weights': ws,
         'default_sim': default_sim,
         # ★ 当前活跃槽 (2026-09-27): 各页面用它决定默认版本, 换槽不用再改页面 ✗
         'active': TRAIN_VERSION,
         'active_compare': COMPARE_VERSION,
         'active_goal': COACH_GOAL_RATE,
+        # ★ 实时性标记 (2026-11-14): 页面拿 newest 判断要不要提示「有新代」
+        'newest_it': newest,
+        'linked_now': made,
+        'ts': int(time.time()),
     })
 
 
