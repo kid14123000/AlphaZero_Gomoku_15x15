@@ -270,7 +270,10 @@ function autoWindow(maxX, minX){
   } else if (maxX < DEFAULT_FROM) {
     want = Math.max(0, maxX - RECENT_WIN);           // 数据没到起点 → 先看最近 RECENT_WIN 局
   } else {
-    want = Math.max(DEFAULT_FROM, minX || 0);        // 至少 DEFAULT_FROM，但不早于第一局（别留大空白）
+    // 至少 DEFAULT_FROM，但不早于第一局（别留大空白）
+    // ⚠️ 向下取整到 100 的整数倍：战斗/防守图按 100 局一个桶打点（x=14200 这种桶边界），
+    //    起点设成 14218 会把整个 14200 桶裁掉 → 那两张图变成 1 个点。
+    want = Math.max(DEFAULT_FROM, Math.floor((minX || 0) / 100) * 100);
   }
   if (want === XMIN) return false;
   XMIN = want;
