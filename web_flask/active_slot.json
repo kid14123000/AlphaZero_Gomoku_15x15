@@ -1,0 +1,10 @@
+{
+  "slot": "v4",
+  "round": null,
+  "compare": "v4",
+  "goal": 0.30,
+  "coach_note": "v4 本地自对弈线（V24Net 15×15），无教练",
+  "student_note": "v4: 纯自对弈, 四平面 INPUT_CHANNELS=4",
+  "infer_log": "",
+  "updated": "2026-11-14 10:00:00"
+}
