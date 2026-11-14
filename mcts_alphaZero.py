@@ -183,7 +183,7 @@ class MCTS(object):
         for n in range(self._n_playout):
             if root_noise is not None and not _noised and self._root._children:
                 _noised = self._add_root_dirichlet(*root_noise)
-            state_copy = copy.deepcopy(state)
+            state_copy = state.clone()
             self._playout(state_copy)
         # 兜底: n_playout 很小或首轮展开发生在最后一步时，补注入一次
         if root_noise is not None and not _noised and self._root._children:

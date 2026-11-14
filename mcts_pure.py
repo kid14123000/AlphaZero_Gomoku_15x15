@@ -163,7 +163,7 @@ class MCTS(object):
         Return: the selected action
         """
         for n in range(self._n_playout):
-            state_copy = copy.deepcopy(state)
+            state_copy = state.clone()
             self._playout(state_copy)
         return max(self._root._children.items(),
                    key=lambda act_node: act_node[1]._n_visits)[0]

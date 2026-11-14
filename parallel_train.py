@@ -318,6 +318,10 @@ def main():
                     version += 1
                     publish(trainer, version)
                     n_since_publish = 0
+                    # 白赢储库落盘（内存 deque 重启即丢；白赢样本稀缺）
+                    _nww = trainer.save_ww_reservoir()
+                    if _nww:
+                        print('  白赢储库已存 %d 条' % _nww, flush=True)
                     el = time.time() - started
                     print('>>> 发布 ver=%d（已训 %d 步，%.2fh，%.1f 局/分）'
                           % (version, train_steps, el / 3600,

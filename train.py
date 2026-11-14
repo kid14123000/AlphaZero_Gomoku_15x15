@@ -99,6 +99,7 @@ class TrainPipeline():
         self._cls_batch = [0, 0, 0, 0]
         # 稀有类独立储库：只放 class=2（白走&白赢）的增广样本，不受主 buffer 的 FIFO 淘汰
         self.ww_reservoir = deque(maxlen=int(os.environ.get('GOMOKU_WW_RESERVOIR', '24000')))
+        self.load_ww_reservoir()
         self.play_batch_size = play_batch_size
         self.epochs = epochs  # num of train_steps for each update
         self.kl_targ = 0.02
@@ -317,6 +318,40 @@ class TrainPipeline():
             play_data = self.get_equi_data(play_data)
             self.add_samples(play_data)
         return last_winner
+
+    # ── 白赢储库持久化（内存 deque 重启即丢，白赢样本稀缺，必须落盘）──
+    def save_ww_reservoir(self, path=None):
+        p = path or os.environ.get('GOMOKU_WW_FILE', '')
+        if not p or not self.ww_reservoir:
+            return 0
+        try:
+            arr_s = np.asarray([d[0] for d in self.ww_reservoir], dtype=np.float32)
+            arr_p = np.asarray([d[1] for d in self.ww_reservoir], dtype=np.float32)
+            arr_z = np.asarray([d[2] for d in self.ww_reservoir], dtype=np.float32)
+            tmp = p + '.tmp'
+            np.savez(tmp, states=arr_s, probs=arr_p, zs=arr_z)
+            os.replace(tmp + '.npz', p)
+            return len(arr_z)
+        except Exception as e:                    # noqa: BLE001
+            print('[ww] 保存失败 %r' % (e,), flush=True)
+            return 0
+
+    def load_ww_reservoir(self, path=None):
+        p = path or os.environ.get('GOMOKU_WW_FILE', '')
+        if not p or not os.path.exists(p):
+            return 0
+        try:
+            with np.load(p) as d:
+                st, pb, zs = d['states'], d['probs'], d['zs']
+            n = 0
+            for i in range(len(zs)):
+                self.ww_reservoir.append((st[i], pb[i], float(zs[i]), 2))
+                n += 1
+            print('[ww] 载入白赢储库 %d 条（%s）' % (n, p), flush=True)
+            return n
+        except Exception as e:                    # noqa: BLE001
+            print('[ww] 载入失败 %r' % (e,), flush=True)
+            return 0
 
     def add_samples(self, play_data_aug):
         """样本统一入口：进主 buffer，同时把【白赢】样本额外存进独立储库"""
