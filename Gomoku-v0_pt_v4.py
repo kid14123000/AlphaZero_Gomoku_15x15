@@ -484,10 +484,17 @@ class AlphaZeroAgent:
         tensor = torch.as_tensor(inp, device=device)
         with torch.cuda.amp.autocast():
             p, v = self.net(tensor)
-        # policy 输出是在【翻转坐标系】上的 225 维 → 翻回真实坐标，
-        # 这样上层 search/decide 里 idx→(r,c) 的既有假设完全不用改。
-        pc = to_numpy(p.float())
-        pc = np.ascontiguousarray(pc.reshape(n, bs, bs)[:, ::-1, :].reshape(n, bs * bs))
+        # policy 输出就是【真实坐标】下的 225 维，不要再翻。
+        # 🚨 曾经在这里做过 pc[:, ::-1, :]「翻回真实坐标」，是错的：
+        #    训练侧 game.py 的 current_state() 把整盘翻转让网络读，但训练标签
+        #    （mcts_alphaZero 里写进 move_probs 的 acts）一直是真实坐标索引。
+        #    也就是网络学的是「翻转输入 → 真实输出」，输出不需要再翻。
+        #    实测 1322 个真实局面（ckpt_it13256）：raw 读法 top1 命中真实落子 32.1%、
+        #    中位排名 2；翻回来的读法只有 6.6%、中位排名 35。
+        #    加这一步会让 对弈/MCTS/摆谱 全部用垂直镜像的 policy 选点
+        #    （A/B 实测 predict_inference 的 top1 400/400 全等于 raw 的镜像）。
+        #    工具：tools/probe_policy_frame.py + tools/probe_predict_ab.py
+        pc = to_numpy(p.float()).reshape(n, bs * bs)
         return pc, to_numpy(v.float())
 
     def predict(self, board_batch, last_moves=None, players=None):

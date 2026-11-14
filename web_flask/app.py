@@ -1058,8 +1058,21 @@ def api_weights():
     made = refresh_weight_links(force=bool(request.args.get('refresh')))
     ws = scan_weights()
     newest = max((_iter_num(w['file']) for w in ws if w['file'] != 'weights.pt'), default=-1)
+    # 版本清单（按目录去重）：本仓 v1 与 v4 指向同一个 gomoku_checkpoints/，
+    # 页面如果按 version 列两次就成了重复选项。这里给出目录，前端才能去重。
+    seen, vers = set(), []
+    for v, dirname, _, disp in VERSIONS:
+        d = _version_dir(dirname)
+        if not os.path.isdir(d) or d in seen:
+            continue
+        n = sum(1 for f in os.listdir(d) if f.endswith('.pt') and not f.startswith('.'))
+        if n == 0:
+            continue
+        seen.add(d)
+        vers.append({'version': v, 'dir': dirname, 'n': n})
     return jsonify({
         'weights': ws,
+        'versions': vers,
         'default_sim': default_sim,
         # ★ 当前活跃槽 (2026-09-27): 各页面用它决定默认版本, 换槽不用再改页面 ✗
         'active': TRAIN_VERSION,
@@ -4976,6 +4989,30 @@ from replay_api import replay_bp
 app.register_blueprint(replay_bp)
 
 
+def _opening_cache_load(path):
+    """读「逐代增量」缓存。返回 {版本: {'boardSize': int, 'items': {it(str): 条目}}}。
+    老格式（{'key':..,'ok_its':[...],'items':[...]}）直接丢弃 —— 它按整份列表做键，
+    正是「来一个新代就全量重算」的根源，没有迁移价值（重算一次 40 s 而已）。"""
+    try:
+        d = json.load(open(path))
+    except Exception:
+        return {}
+    if isinstance(d, dict) and d.get('v') == 2 and isinstance(d.get('cores'), dict):
+        return d['cores']
+    return {}
+
+
+def _opening_cache_save(path, cores):
+    """原子写，避免训练高峰期被读到半截 JSON。"""
+    try:
+        tmp = path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump({'v': 2, 'cores': cores}, f)
+        os.replace(tmp, path)
+    except Exception as e:
+        print(f'[opening-dist] 缓存写入失败: {e}')
+
+
 @app.route('/api/opening_dist', methods=['POST'])
 @require_auth
 def api_opening_dist():
@@ -5006,64 +5043,70 @@ def api_opening_dist():
         if not its:
             return jsonify({'ok': False, 'error': f'{wdir} 无 {version} 权重'})
         cache_file = os.path.join(SCRIPT_DIR, 'opening_dist_cache.json')
-        cache = {}
-        if os.path.exists(cache_file):
-            try:
-                cache = json.load(open(cache_file))
-            except Exception:
-                pass
-        cache_key = version + ':' + ','.join(str(i) for i, _ in its)
-        if cache.get('key') == cache_key and cache.get('ok_its') and \
-           len(cache.get('items', [])) == len(cache.get('ok_its', [])):
-            return jsonify({'ok': True, 'version': version, 'cached': True, 'items': cache['items']})
-        mod = load_mod_for(version)
-        meta = load_metadata()
-        net_kwargs = meta.get('config', {}).get('net_kwargs',
-            {'conv_filters': [128], 'residual_filters': [[128, 128]] * 8, 'policy_filters': [128]})
-        # v16 是 9×9 试验版 (GN): 环境/棋盘/坐标全按 9×9; 其余版本 15×15
-        is9 = (version == 'v16')
-        if is9:
-            import boardgame2
-            env = boardgame2.KInARowEnv(board_shape=9, target_length=5)
-            board = np.zeros((9, 9), dtype=np.float32)
-        else:
-            env = gym.make('Gomuku-v0')
-            board = np.zeros((15, 15), dtype=np.float32)
-        bsize = 9 if is9 else 15
-        items = []
+        # ── 逐代增量缓存 (2026-11-14) ──────────────────────────────────────
+        # 老写法把「整份代列表」当缓存键：训练每 50 局出一个新 ckpt，键就变一次，
+        # 于是 158 代全部重算（实测 40 s、CPU 满跑，而这台机器正在训练）。
+        # 现在按 it 逐条存，新代只算新增的那几条（每条约 0.3 s）。
+        cores = _opening_cache_load(cache_file)
+        prev = (cores.get(version) or {}).get('items') or {}
+        if not isinstance(prev, dict):
+            prev = {}
+        todo = [(it, f) for it, f in its if str(it) not in prev]
         skipped = []
-        for it, f in its:
-            try:
-                t_agent = mod.AlphaZeroAgent(env=env, kwargs=net_kwargs, sim_count=1, batches=1, batch_size=8)
-                sd = torch.load(f, map_location=mod.device)
-                t_agent.net.load_state_dict(sd)
-                t_agent.net.to(mod.device)
-                net = t_agent.net
-                net.eval()
-                if hasattr(mod, 'make_input'):
-                    x = torch.tensor(mod.make_input(board)).unsqueeze(0)
-                else:
-                    x = torch.tensor(board).unsqueeze(0).unsqueeze(0)
-                with torch.no_grad():
-                    p_log, v = net(x)
-                p = torch.exp(p_log).cpu().numpy().reshape(-1)
-                p = p / p.sum()
-                ent = float(-np.sum(p * np.log(p + 1e-12)))
-                top_idx = np.argsort(p)[::-1][:5]
-                top = [{'r': int(j) // bsize, 'c': int(j) % bsize, 'pct': round(float(p[j]) * 100, 2)} for j in top_idx]
-                vv = float(v.reshape(-1)[0])
-                items.append({'it': it, 'entropy': round(ent, 3), 'top': top,
-                              'value': round(vv, 3),
-                              'winrate': round((vv + 1) / 2 * 100, 1),
-                              'dist': [round(float(vv), 5) for vv in p]})
-            except Exception as e:
-                skipped.append({'it': it, 'error': str(e)[:60]})
-                print(f'[opening-dist] 跳过损坏权重 it{it}: {e}')
-        try:
-            json.dump({'key': cache_key, 'ok_its': [x['it'] for x in items], 'items': items}, open(cache_file, 'w'))
-        except Exception as e:
-            print(f'[opening-dist] 缓存写入失败: {e}')
-        return jsonify({'ok': True, 'version': version, 'cached': False,
+        computed = 0
+        if todo:
+            mod = load_mod_for(version)
+            meta = load_metadata()
+            net_kwargs = meta.get('config', {}).get('net_kwargs',
+                {'conv_filters': [128], 'residual_filters': [[128, 128]] * 8, 'policy_filters': [128]})
+            # v16 是 9×9 试验版 (GN): 环境/棋盘/坐标全按 9×9; 其余版本 15×15
+            is9 = (version == 'v16')
+            bsize_tmp = 9 if is9 else 15
+            board = np.zeros((bsize_tmp, bsize_tmp), dtype=np.float32)
+            if hasattr(mod, 'make_input'):
+                x = torch.tensor(mod.make_input(board)).unsqueeze(0).to(mod.device)
+            else:
+                x = torch.tensor(board).unsqueeze(0).unsqueeze(0).to(mod.device)
+            # 只建一次网络，之后每个权重只做 load_state_dict（老写法每代都新建
+            # AlphaZeroAgent + gym.make，光构造开销就占了大头）
+            net = mod.AlphaZeroNet(conv_channels=net_kwargs['conv_filters'][0],
+                                   residual_blocks=len(net_kwargs['residual_filters']),
+                                   board_size=bsize_tmp).to(mod.device)
+            net.eval()
+            for it, f in todo:
+                try:
+                    sd = torch.load(f, map_location=mod.device)
+                    if all(k.startswith('net.') for k in sd):
+                        sd = {k[4:]: v for k, v in sd.items()}
+                    net.load_state_dict(sd)
+                    net.eval()
+                    with torch.no_grad():
+                        p_log, v = net(x)
+                    p = torch.exp(p_log).cpu().numpy().reshape(-1)
+                    p = p / p.sum()
+                    ent = float(-np.sum(p * np.log(p + 1e-12)))
+                    top_idx = np.argsort(p)[::-1][:5]
+                    top = [{'r': int(j) // bsize_tmp, 'c': int(j) % bsize_tmp,
+                            'pct': round(float(p[j]) * 100, 2)} for j in top_idx]
+                    vv = float(v.reshape(-1)[0])
+                    prev[str(it)] = {'it': it, 'entropy': round(ent, 3), 'top': top,
+                                     'value': round(vv, 3),
+                                     'winrate': round((vv + 1) / 2 * 100, 1),
+                                     'dist': [round(float(u), 5) for u in p]}
+                    computed += 1
+                except Exception as e:
+                    skipped.append({'it': it, 'error': str(e)[:60]})
+                    print(f'[opening-dist] 跳过损坏权重 it{it}: {e}')
+            cores[version] = {'boardSize': bsize_tmp, 'items': prev}
+            _opening_cache_save(cache_file, cores)
+        items = [prev[str(it)] for it, _ in its if str(it) in prev]
+        if not items:
+            return jsonify({'ok': False, 'error': f'{version} 无可读权重'})
+        return jsonify({'ok': True, 'version': version,
+                        'cached': computed == 0,
+                        'computed': computed,
+                        'total': len(items),
+                        'newest_it': items[-1]['it'],
                         'items': items, 'count': len(items), 'skipped': skipped})
     except Exception as e:
         import traceback; traceback.print_exc()
