@@ -88,6 +88,17 @@ class TrainPipeline():
         self.buffer_size = 10000
         self.batch_size = batch_size  # mini-batch size for training
         self.data_buffer = deque(maxlen=self.buffer_size)
+        # ── 课程学习：按 (行动方 × 胜负) 四类分层采样 ──
+        # 0=黑走&黑赢 1=黑走&黑输 2=白走&白赢 3=白走&白输
+        # 目标份额由 sync/class_weight.json 提供（控制器动态写）；空/缺失=均匀采样
+        self.class_weight_file = str(os.environ.get('GOMOKU_CLASS_WEIGHT_FILE', '') or '')
+        self.short_white_win_min = int(os.environ.get('GOMOKU_WW_MIN_LEN', '20'))
+        self._cw_mtime = None
+        self._cw_shares = None
+        self._cls_hist = [0, 0, 0, 0]
+        self._cls_batch = [0, 0, 0, 0]
+        # 稀有类独立储库：只放 class=2（白走&白赢）的增广样本，不受主 buffer 的 FIFO 淘汰
+        self.ww_reservoir = deque(maxlen=int(os.environ.get('GOMOKU_WW_RESERVOIR', '24000')))
         self.play_batch_size = play_batch_size
         self.epochs = epochs  # num of train_steps for each update
         self.kl_targ = 0.02
@@ -208,10 +219,13 @@ class TrainPipeline():
 
     def get_equi_data(self, play_data):
         """augment the data set by rotation and flipping
-        play_data: [(state, mcts_prob, winner_z), ..., ...]
+        play_data: [(state, mcts_prob, winner_z[, cls]), ..., ...]
+        cls（第 4 元，可选）= 分层采样用的类别标签，原样透传
         """
         extend_data = []
-        for state, mcts_prob, winner in play_data:
+        for item in play_data:
+            state, mcts_prob, winner = item[0], item[1], item[2]
+            cls = item[3] if len(item) > 3 else -1
             for i in [1, 2, 3, 4]:
                 # rotate counterclockwise
                 equi_state = np.array([np.rot90(s, i) for s in state])
@@ -219,13 +233,13 @@ class TrainPipeline():
                     mcts_prob.reshape(self.board_height, self.board_width)), i)
                 extend_data.append((equi_state,
                                     np.flipud(equi_mcts_prob).flatten(),
-                                    winner))
+                                    winner, cls))
                 # flip horizontally
                 equi_state = np.array([np.fliplr(s) for s in equi_state])
                 equi_mcts_prob = np.fliplr(equi_mcts_prob)
                 extend_data.append((equi_state,
                                     np.flipud(equi_mcts_prob).flatten(),
-                                    winner))
+                                    winner, cls))
         return extend_data
 
     def collect_selfplay_data(self, n_games=1):
@@ -267,6 +281,19 @@ class TrainPipeline():
             else:
                 q_stats = None
 
+            # ── 分层采样标签：(行动方 × 胜负) 0=BB赢 1=B输 2=W赢 3=W输 ──
+            # 放在 value 目标替换之后打，避免重建元组时丢掉。
+            # 反捡漏：短手数(默认 <20)的白胜样本不打成 2（归 3），不进"正样本加权"
+            _short_ww = (winner == 2 and self.episode_len < self.short_white_win_min)
+            _cl = []
+            for _i in range(self.episode_len):
+                _mover = 1 if _i % 2 == 0 else 2
+                _c = 2 * (1 if _mover == 2 else 0) + (0 if winner == _mover else 1)
+                if _short_ww and _c == 2:
+                    _c = 3
+                _cl.append(_c)
+            play_data = [(d[0], d[1], d[2], _cl[_j]) for _j, d in enumerate(play_data)]
+
             last_winner = winner
             self.last_winner = winner
             self.metrics.log('game',
@@ -288,12 +315,79 @@ class TrainPipeline():
                     print('save_games failed:', e, flush=True)
             # augment the data
             play_data = self.get_equi_data(play_data)
-            self.data_buffer.extend(play_data)
+            self.add_samples(play_data)
         return last_winner
+
+    def add_samples(self, play_data_aug):
+        """样本统一入口：进主 buffer，同时把【白赢】样本额外存进独立储库"""
+        self.data_buffer.extend(play_data_aug)
+        for d in play_data_aug:
+            if len(d) > 3 and d[3] == 2:
+                self.ww_reservoir.append(d)
+
+    def _load_class_shares(self):
+        """读 sync/class_weight.json 的目标份额 [B_win, B_lose, W_win, W_lose]；失败=None(均匀)"""
+        if not self.class_weight_file:
+            return None
+        try:
+            m = os.path.getmtime(self.class_weight_file)
+            if m == self._cw_mtime:
+                return self._cw_shares
+            self._cw_mtime = m
+            with open(self.class_weight_file) as f:
+                d = json.load(f)
+            sh = [float(d.get(k, 0.25)) for k in ('B_win', 'B_lose', 'W_win', 'W_lose')]
+            s = sum(sh)
+            self._cw_shares = [x / s for x in sh] if s > 0 else None
+        except Exception:                       # noqa: BLE001  文件缺失/半写
+            self._cw_shares = None
+        return self._cw_shares
+
+    def sample_batch(self):
+        """按四类目标份额分层抽样；无配置/退化时退回均匀抽样"""
+        shares = self._load_class_shares()
+        n = len(self.data_buffer)
+        if shares is None or n <= self.batch_size:
+            return random.sample(self.data_buffer, self.batch_size)
+        pools = {0: [], 1: [], 2: [], 3: []}
+        for d in self.data_buffer:
+            c = d[3] if len(d) > 3 else -1
+            if c in pools:
+                pools[c].append(d)
+        pool_len = {c: len(pools[c]) for c in range(4)}
+        if self.ww_reservoir:                    # 白赢改用独立储库（供给更足、不被淘汰）
+            pools[2] = list(self.ww_reservoir)
+        idx = pools
+        self._cls_hist = [len(idx[c]) for c in range(4)]
+        self._cls_hist_buf = [pool_len[c] for c in range(4)]
+        cnt = [min(int(round(self.batch_size * shares[c])), len(idx[c])) for c in range(4)]
+        # 份额被小类别截断后，用有富余的类别补齐
+        need = self.batch_size - sum(cnt)
+        order = sorted(range(4), key=lambda c: len(idx[c]) - cnt[c], reverse=True)
+        while need > 0:
+            moved = False
+            for c in order:
+                if need <= 0:
+                    break
+                if len(idx[c]) - cnt[c] > 0:
+                    cnt[c] += 1
+                    need -= 1
+                    moved = True
+            if not moved:
+                break
+        self._cls_batch = list(cnt)          # 抽样后各类实际入批数量（补齐之后，验证用）
+        self._cls_batch = list(cnt)          # 抽样后各类实际入批数量（补齐之后，验证用）
+        out = []
+        for c in range(4):
+            if cnt[c] > 0:
+                out.extend(idx[c] if cnt[c] == len(idx[c]) else random.sample(idx[c], cnt[c]))
+        if len(out) < self.batch_size:
+            out.extend(random.sample(self.data_buffer, self.batch_size - len(out)))
+        return out
 
     def policy_update(self):
         """update the policy-value net"""
-        mini_batch = random.sample(self.data_buffer, self.batch_size)
+        mini_batch = self.sample_batch()
         state_batch = [data[0] for data in mini_batch]
         mcts_probs_batch = [data[1] for data in mini_batch]
         winner_batch = [data[2] for data in mini_batch]
@@ -343,7 +437,11 @@ class TrainPipeline():
                          entropy=float(entropy),
                          ev_old=float(explained_var_old),
                          ev_new=float(explained_var_new),
-                         buffer=len(self.data_buffer))
+                         buffer=len(self.data_buffer),
+                         cls_hist=self._cls_hist,
+                         cls_batch=getattr(self, '_cls_batch', []),
+                         ww_res=len(self.ww_reservoir),
+                         cw_shares=self._cw_shares or [])
         return loss, entropy
 
     def rapfi_anchor(self, n_games=None):

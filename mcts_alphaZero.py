@@ -251,6 +251,8 @@ class MCTSPlayer(object):
         # root_noise=True: 噪声注入根先验（AGZ 论文式 / v24 口径）
         # root_noise=False: 旧行为，噪声只混进"落子抽样"分布
         self._root_noise = bool(root_noise)
+        # 不对称搜索预算（课程学习用）：{1: 黑方sims, 2: 白方sims}；None = 统一 n_playout
+        self.sims_by_player = None
 
     def set_player_ind(self, p):
         self.player = p
@@ -259,6 +261,11 @@ class MCTSPlayer(object):
         self.mcts.update_with_move(-1)
 
     def get_action(self, board, temp=1e-3, return_prob=0):
+        # 按执色切换搜索预算（每局开始时由 worker 设置 self.sims_by_player）
+        if self.sims_by_player:
+            _ns = self.sims_by_player.get(board.current_player)
+            if _ns and int(_ns) != self.mcts._n_playout:
+                self.mcts._n_playout = int(_ns)
         sensible_moves = board.availables
         # the pi vector returned by MCTS as in the alphaGo Zero paper
         move_probs = np.zeros(board.width*board.height)

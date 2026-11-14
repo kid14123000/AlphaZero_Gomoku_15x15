@@ -68,6 +68,7 @@ def spawn(wid, args, logdir):
            '--c_puct', str(args.c_puct),
            '--root_noise', str(args.root_noise),
            '--temp_switch', str(args.temp_switch),
+           '--handicap_file', str(getattr(args, 'handicap_file', '') or ''),
            '--device', 'cuda' if args.use_gpu else 'cpu']
     if args.temp_after is not None:
         cmd += ['--temp_after', str(args.temp_after)]
@@ -96,6 +97,7 @@ def ingest(trainer, files, args, games_file):
                 wid = int(d['wid'])
                 secs = float(d['seconds'])
                 ver = int(d['version'])
+                black_sims = int(d['black_sims']) if 'black_sims' in getattr(d, 'files', []) else 0
         except Exception as e:              # noqa: BLE001  文件还没写完/损坏
             print('读队列文件失败 %s: %s' % (path, e), flush=True)
             try:
@@ -110,7 +112,7 @@ def ingest(trainer, files, args, games_file):
         trainer.episode_len = len(probs)
 
         trainer.metrics.log('game', batch=n, episode_len=int(len(probs)),
-                           winner=winner, worker=wid,
+                           winner=winner, worker=wid, black_sims=black_sims,
                            game_seconds=round(secs, 1), net_version=ver)
 
         if games_file:
@@ -120,6 +122,7 @@ def ingest(trainer, files, args, games_file):
                 with open(games_file, 'a') as gf:
                     gf.write(json.dumps({'batch': n, 'winner': winner,
                                          'episode_len': int(len(probs)),
+                                         'black_sims': black_sims,
                                          'moves': mv}, ensure_ascii=False) + '\n')
             except Exception as e:          # noqa: BLE001
                 print('save_games failed:', e, flush=True)
@@ -139,8 +142,19 @@ def ingest(trainer, files, args, games_file):
                     print('  q 分布  mean %+.4f  std %.4f  absmean %.4f'
                           % (float(qs.mean()), float(qs.std()),
                              float(np.abs(qs).mean())), flush=True)
-        play_data = list(zip(states, probs, target))
-        trainer.data_buffer.extend(trainer.get_equi_data(play_data))
+        # ── 分层采样标签：(行动方 × 胜负) 0=B走&B赢 1=B走&B输 2=W走&W赢 3=W走&W输 ──
+        # 主进程不自己下棋（样本来自 npz），所以打标签放在这里，而不是 collect_selfplay_data
+        _wmin = int(getattr(trainer, 'short_white_win_min', 20))
+        _short_ww = (winner == 2 and len(probs) < _wmin)   # 反捡漏：短手数白胜不算正样本
+        _cl = []
+        for _i in range(len(probs)):
+            _mover = 1 if _i % 2 == 0 else 2
+            _c = 2 * (1 if _mover == 2 else 0) + (0 if winner == _mover else 1)
+            if _short_ww and _c == 2:
+                _c = 3
+            _cl.append(_c)
+        play_data = [(states[j], probs[j], target[j], _cl[j]) for j in range(len(probs))]
+        trainer.add_samples(trainer.get_equi_data(play_data))
         os.remove(path)
         got += 1
         print('局 %d  手数 %d  winner %d  w%d  %.0fs  ver %d  buffer %d'
@@ -182,6 +196,8 @@ def main():
     ap.add_argument('--ckpt_dir', type=str, default='checkpoints')
     ap.add_argument('--metrics_file', type=str, default='logs/metrics.jsonl')
     ap.add_argument('--save-games', dest='save_games', type=str, default='')
+    ap.add_argument('--handicap_file', type=str, default='',
+                    help='课程学习控制器写的 json（含 black_sims）；空=对称训练')
     ap.add_argument('--use_gpu', action='store_true')
     ap.add_argument('--value_target', type=str, default='z',
                     choices=['z', 'q', 'mix'],

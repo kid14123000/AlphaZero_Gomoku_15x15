@@ -12,6 +12,7 @@
 from __future__ import print_function
 
 import argparse
+import json
 import os
 import random
 import sys
@@ -57,6 +58,8 @@ def main():
     ap.add_argument('--root_noise', type=int,
                     default=int(os.environ.get('GOMOKU_ROOT_NOISE', '1')),
                     help='1=Dirichlet 噪声注入【根先验】(AGZ/v24 式)；0=旧行为(只混落子抽样)')
+    ap.add_argument('--handicap_file', type=str, default='',
+                    help='课程学习控制器写的 json（含 black_sims）；空=对称训练')
     ap.add_argument('--dirichlet_eps', type=float, default=0.25,
                     help='自我对弈探索噪声权重 ε；上游 0.25，短局建议 0.10')
     ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
@@ -139,6 +142,17 @@ def main():
                 print('[w%d] 换权重失败(%s)，用旧版继续' % (wid, e), flush=True)
 
         t0 = time.time()
+        # ── 课程学习：每局开始前读一次黑方搜索预算（白方恒为 args.n_playout）──
+        _bsims = args.n_playout
+        if args.handicap_file and args.handicap_file != 'None' and os.path.exists(args.handicap_file):
+            try:
+                with open(args.handicap_file) as _hf:
+                    _raw = json.load(_hf).get('black_sims', args.n_playout)
+                _bsims = max(20, int(_raw))
+            except Exception as _e:              # noqa: BLE001
+                print('[w%d] handicap 读取失败，用对称值: %r' % (wid, _e), flush=True)
+                _bsims = args.n_playout
+        player.sims_by_player = {1: int(_bsims), 2: int(args.n_playout)}
         try:
             # 总是收集每步 MCTS 根 Q：主进程按 --value_target 决定用 z 还是 q，
             # worker 侧不重复跑一遍，代价只是多存一个 float 数组。
@@ -161,14 +175,15 @@ def main():
         tmp = os.path.join(args.queue, '.tmp_%d_%d.npz' % (wid, seq))
         np.savez(tmp, states=states, probs=probs, zs=zs, qs=qs, moves=moves,
                  winner=np.int32(winner), wid=np.int32(wid),
+                 black_sims=np.int32(_bsims),
                  seconds=np.float64(dt), version=np.int32(cur_ver))
         os.replace(tmp, os.path.join(args.queue, '%015d_%d_%d.npz'
                                      % (int(t0 * 1000), wid, seq)))
         seq += 1
         n_done += 1
         touch(hb_path, '%f\n' % time.time())
-        print('[w%d] 第%d局  %d手  winner=%d  %.0fs  ver=%d'
-              % (wid, n_done, len(play_data), winner, dt, cur_ver), flush=True)
+        print('[w%d] 第%d局  %d手  winner=%d  %.0fs  ver=%d  sims=%d/%d'
+              % (wid, n_done, len(play_data), winner, dt, cur_ver, _bsims, args.n_playout), flush=True)
         # 行为指纹：根先验噪声应"每手注入一次"。注入次数应 = 本局手数（树被 reset 时
         # 首手需等根展开，仍是 1 次/手）。sum≈1.0 说明噪声按 ε/α 正确归一化。
         if args.root_noise:
