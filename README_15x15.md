@@ -267,3 +267,25 @@ cd ~/AlphaZero_Gomoku
   原因是对局变长 + `Board.deepcopy` 随历史长度变贵。属预期副作用，**不是效率 bug**；判据待 ≥3 代再定。
 
 - 审计：`logs/metrics.jsonl` 的 `start` 记录新增 `c_puct` / `root_noise` 字段。
+
+### 2026-11-14 14:20 开源发布：v0.1.0
+
+公开发布版在 GitHub，与本地开发仓库**分开维护**（本地仓库带着上游 82 个提交的历史和第三方作者邮箱，不能直接推）：
+
+- 仓库：https://github.com/kid14123000/AlphaZero_Gomoku_15x15
+- 版本：`v0.1.0`（单提交 + tag，107 文件，MIT）
+- 长期本地副本：`~/Downloads/AlphaZero_Gomoku_15x15-v0.1.0`（从 GitHub 克隆，带 origin）
+
+发布时做过的事（下次重新发布照做）：
+
+1. `git archive HEAD | tar -x` 导出干净工作区，**丢掉上游历史**（历史里有网易公司邮箱 / 北航邮箱等第三方信息）
+2. 删 `gomoku_checkpoints/`（156 个指向本地 `checkpoints/` 的符号链接，发布出去全是断链）
+3. 删上游示例权重 `best_policy_*.model2`
+4. 5 处硬编码 `/Users/kid/...` 改成 `os.path.dirname(__file__)` 推算
+5. 提交作者用 `kid14123000@users.noreply.github.com`，不用真实邮箱
+6. 补 `requirements.txt`（原仓库没有；`boardgame2` 是外部 PyPI 包，之前没记录）
+7. README 重写（网络 / 训练策略 / 设备 / 产出效率 / 曲线 / 调整时间线 / 人机对局）
+8. 全库正则终检：个人路径 / 主机名 / 内网 IP / 凭证 / 私钥 / 他人邮箱 / 旧账号名
+
+图由 `docs/make_charts.py`（训练曲线）、`docs/make_charts2.py`（布局演化 + 开局热力图）、
+`docs/make_board.py`（人机对局棋盘）生成，都从 `logs/` 读数据，可直接重跑。
