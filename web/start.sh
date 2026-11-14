@@ -38,15 +38,29 @@ PIDFILE="logs/web.$PORT.pid"
 LOGFILE="logs/web.$PORT.log"
 mkdir -p logs
 
-running_pid() {
-  [ -f "$PIDFILE" ] || return 1
+port_pid() {
+  # 端口上的真相：pidfile 可能过期（换过 shell、手动起过、被 kill 后没清）
   local p
-  p=$(cat "$PIDFILE" 2>/dev/null)
+  p=$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)
   [ -n "$p" ] || return 1
-  kill -0 "$p" 2>/dev/null || return 1
-  # 必须是本目录的 web/server.py，别拿旧 pid 杀到别的进程
   ps -o command= -p "$p" 2>/dev/null | grep -q "web/server.py" || return 1
   echo "$p"
+}
+
+running_pid() {
+  local p
+  if [ -f "$PIDFILE" ]; then
+    p=$(cat "$PIDFILE" 2>/dev/null)
+    if [ -n "$p" ] && kill -0 "$p" 2>/dev/null \
+       && ps -o command= -p "$p" 2>/dev/null | grep -q "web/server.py"; then
+      echo "$p"
+      return 0
+    fi
+  fi
+  # 🚨 只认 pidfile 会漏掉孤儿进程：pidfile 写了新 pid、老进程还占着端口，
+  #    --stop 杀掉不存在的 pid（静默成功），--daemon 起的新进程 EADDRINUSE 秒退，
+  #    而 curl 探测到老进程还在应答 ⇒ 脚本报告「启动成功」，实际跑的是旧代码。
+  port_pid
 }
 
 case "$MODE" in
@@ -87,9 +101,14 @@ print(p.pid)
 PY
 )
     echo "$NEWPID" > "$PIDFILE"
-    # 起得来才算成功
+    # 起得来才算成功 —— 而且必须确认应答的就是 NEWPID 本身。
+    # 🚨 只 curl 端口不够：孤儿进程还占着端口时会「应答成功」，
+    #    于是脚本报告启动成功，实际跑的还是旧代码（本仓踩过）。
     for _ in $(seq 1 40); do
-      if curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/"; then
+      if ! kill -0 "$NEWPID" 2>/dev/null; then
+        break                       # 新进程已退出（多半 EADDRINUSE），别再等
+      fi
+      if l=$(port_pid) && [ "$l" = "$NEWPID" ]; then
         echo "✅ 已在后台启动 :$PORT (pid $NEWPID)"
         echo "   http://127.0.0.1:$PORT/"
         echo "   日志 $LOGFILE"
@@ -98,6 +117,9 @@ PY
       sleep 0.25
     done
     echo "❌ 启动失败，看 $LOGFILE：" >&2
+    if l=$(port_pid); then
+      echo "   注意：:$PORT 仍被 pid $l 占用（pidfile 过期的孤儿进程），先 --stop 再起" >&2
+    fi
     tail -20 "$LOGFILE" >&2
     rm -f "$PIDFILE"
     exit 1

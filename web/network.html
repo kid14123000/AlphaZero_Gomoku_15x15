@@ -179,9 +179,9 @@ function renderAll(d) {
   const v = d.value;
   $('valRaw').textContent = fx(v, 3);
   $('valSub').innerHTML =
-    `<span style="color:#93c5fd">黑 ${fx(d.value_black_pct, 1)}%</span> · ` +
-    `<span style="color:#fcd34d">白 ${fx(100 - d.value_black_pct, 1)}%</span>` +
-    `<br><span style="color:#475569">value = 当前走子方（${d.player === 1 ? '黑' : '白'}）视角</span>`;
+    `<span style="color:#93c5fd">黑胜 ${fx(d.win_black_pct, 1)}%</span> · ` +
+    `<span style="color:#fcd34d">白胜 ${fx(d.win_white_pct, 1)}%</span>` +
+    `<br><span style="color:#475569">value = 当前走子方（${d.player === 1 ? '黑' : '白'}）视角 · 黑方优势 ${fx(d.value_black_pct, 1)}</span>`;
 
   $('polEnt').textContent = fx(d.policy.entropy, 3);
   $('polSub').innerHTML = `最大 ${fx(d.policy.max_prob * 100, 1)}% · 合法点 ${d.policy.legal}` +

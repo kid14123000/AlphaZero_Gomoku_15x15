@@ -566,6 +566,65 @@ def mcts_viz(board, net, n_playout=100, c_puct=5, temp=1.0, trace_cap=400):
 # ─────────────────────────────────────────────────────────────
 # 网络前向：逐层激活
 # ─────────────────────────────────────────────────────────────
+def _net_layer_spec(pvn):
+    """按网络结构自适应给出「要抓哪些层」。返回 [(key, 显示名, op说明, module, kind)]。
+
+    🚨 不能写死 v1 Net 的层名（conv1/conv2/conv3/act_conv1/val_conv1…）：
+       15×15 这条线用的是 V24Net（conv_input + N×res_blocks + 双头，层名完全不同），
+       照抄 v1 的选择器会 getattr 直接抛
+       AttributeError: 'V24Net' object has no attribute 'conv1'，
+       整个「网络前向」页从此打不开。
+    """
+    spec = []
+
+    if hasattr(pvn, 'res_blocks'):
+        # ── V24Net：输入卷积 + 残差块（首/中/末抽样）+ 双头
+        spec.append(('conv_input', 'conv_input',
+                     'Conv2d(4→%d, k3)+BN+ReLU' % pvn.conv_input.out_channels,
+                     pvn.conv_input, 'conv'))
+        nb = len(pvn.res_blocks)
+        for i in sorted(set([0, nb // 2, nb - 1])) if nb else []:
+            blk = pvn.res_blocks[i]
+            spec.append(('res%d' % i, 'res_blocks[%d]' % i,
+                         'ResBlock %d→%d（2×conv+BN+残差）' % (
+                             blk.conv1.in_channels, blk.conv2.out_channels),
+                         blk, 'conv'))
+        spec += [
+            ('policy_conv', 'policy_conv',
+             'Conv2d(%d→1, k3)+BN+ReLU' % pvn.policy_conv.in_channels,
+             pvn.policy_conv, 'conv'),
+            ('policy_conv2', 'policy_conv2',
+             'Conv2d(%d→1, k1)+BN+ReLU' % pvn.policy_conv2.in_channels,
+             pvn.policy_conv2, 'conv'),
+            ('policy_fc', 'policy_fc',
+             'Linear(%d→%d)+LogSoftmax' % (pvn.policy_fc.in_features,
+                                           pvn.policy_fc.out_features),
+             pvn.policy_fc, 'vec'),
+            ('value_conv', 'value_conv',
+             'Conv2d(%d→1, k3)+BN+ReLU' % pvn.value_conv.in_channels,
+             pvn.value_conv, 'conv'),
+            ('value_fc1', 'value_fc1',
+             'Linear(%d→128)+ReLU' % pvn.value_fc1.in_features,
+             pvn.value_fc1, 'vec'),
+            ('value_fc2', 'value_fc2', 'Linear(128→1)+tanh',
+             pvn.value_fc2, 'vec'),
+        ]
+        return spec
+
+    # ── v1 Net（上游 0.33M）：三层 conv + 双头
+    spec += [
+        ('conv1', 'conv1', 'Conv2d(4→32, k3)', pvn.conv1, 'conv'),
+        ('conv2', 'conv2', 'Conv2d(32→64, k3)', pvn.conv2, 'conv'),
+        ('conv3', 'conv3', 'Conv2d(64→128, k3)', pvn.conv3, 'conv'),
+        ('act_conv1', 'act_conv1', 'Conv2d(128→4, k1)', pvn.act_conv1, 'conv'),
+        ('act_fc1', 'act_fc1', 'Linear+LogSoftmax(225)', pvn.act_fc1, 'vec'),
+        ('val_conv1', 'val_conv1', 'Conv2d(128→2, k1)', pvn.val_conv1, 'conv'),
+        ('val_fc1', 'val_fc1', 'Linear(→64)', pvn.val_fc1, 'vec'),
+        ('val_fc2', 'val_fc2', 'Linear(→1)+tanh', pvn.val_fc2, 'vec'),
+    ]
+    return spec
+
+
 def net_viz(board, net):
     """一次前向，抓每层激活。返回逐层热力图 + policy/value 双头。"""
     import torch
@@ -575,6 +634,7 @@ def net_viz(board, net):
     state = np.ascontiguousarray(board.current_state().reshape(-1, 4, WIDTH, HEIGHT))
     x = torch.from_numpy(state).float()
 
+    spec = _net_layer_spec(pvn)
     captured = {}
     handles = []
 
@@ -583,9 +643,8 @@ def net_viz(board, net):
             captured[name] = out.detach().clone()
         return _h
 
-    for nm in ('conv1', 'conv2', 'conv3', 'act_conv1', 'act_fc1', 'val_conv1',
-               'val_fc1', 'val_fc2'):
-        handles.append(getattr(pvn, nm).register_forward_hook(hook(nm)))
+    for key, _nm, _op, mod, _kind in spec:
+        handles.append(mod.register_forward_hook(hook(key)))
     try:
         with torch.no_grad():
             logp, v = pvn(x)
@@ -595,7 +654,7 @@ def net_viz(board, net):
 
     layers = []
 
-    def add_conv(name, op, tensor, max_channels=8):
+    def add_conv(name, op, tensor, module=None, max_channels=8):
         a = tensor[0].numpy()                 # (C,15,15)
         C = a.shape[0]
         mean_map = a.mean(axis=0)
@@ -607,8 +666,7 @@ def net_viz(board, net):
             maps.append({'label': 'ch%d' % i, 'grid': to_grid(a[i])})
         layers.append({
             'name': name, 'op': op, 'shape': list(tensor[0].shape),
-            'params': int(sum(p.numel() for p in
-                              getattr(pvn, name).parameters())) if name != 'input' else 0,
+            'params': int(sum(p.numel() for p in module.parameters())) if module else 0,
             'stats': {'mean': round(float(flat.mean()), 4),
                       'std': round(float(flat.std()), 4),
                       'max': round(float(flat.max()), 4),
@@ -620,12 +678,11 @@ def net_viz(board, net):
             'maps': maps,
         })
 
-    def add_vec(name, op, tensor, grid=None):
+    def add_vec(name, op, tensor, module=None, grid=None):
         a = tensor[0].numpy().ravel()
         layers.append({
             'name': name, 'op': op, 'shape': list(tensor[0].shape),
-            'params': int(sum(p.numel() for p in
-                              getattr(pvn, name).parameters())),
+            'params': int(sum(p.numel() for p in module.parameters())) if module else 0,
             'stats': {'mean': round(float(a.mean()), 4),
                       'std': round(float(a.std()), 4),
                       'max': round(float(a.max()), 4),
@@ -644,18 +701,15 @@ def net_viz(board, net):
         prod = prod / prod.sum()
     pgrid = [round(float(x), 6) for x in prod]
 
-    add_conv('conv1', 'Conv2d(4→32, k3)', captured['conv1'])
-    add_conv('conv2', 'Conv2d(32→64, k3)', captured['conv2'])
-    add_conv('conv3', 'Conv2d(64→128, k3)', captured['conv3'])
-    add_conv('act_conv1', 'Conv2d(128→4, k1)', captured['act_conv1'])
-    add_vec('act_fc1', 'Linear+LogSoftmax(225)', captured['act_fc1'], pgrid)
-    add_conv('val_conv1', 'Conv2d(128→2, k1)', captured['val_conv1'])
-    add_vec('val_fc1', 'Linear(→64)', captured['val_fc1'])
-    add_vec('val_fc2', 'Linear(→1)+tanh', captured['val_fc2'])
-
-    order = ['conv1', 'conv2', 'conv3', 'act_conv1', 'act_fc1',
-             'val_conv1', 'val_fc1', 'val_fc2']
-    layers.sort(key=lambda L: order.index(L['name']))
+    # 按 spec 顺序逐层落表（结构自适应，v1 Net 与 V24Net 都能跑）
+    for key, nm, op, mod, kind in spec:
+        t = captured.get(key)
+        if t is None:
+            continue
+        if kind == 'conv':
+            add_conv(nm, op, t, mod)
+        else:
+            add_vec(nm, op, t, mod, pgrid if key.startswith('policy') else None)
 
     top = sorted([{'r': i // WIDTH, 'c': i % WIDTH, 'prob': round(float(p), 6)}
                   for i, p in enumerate(prod)], key=lambda x: -x['prob'])[:10]
@@ -681,7 +735,12 @@ def net_viz(board, net):
                    'legal': int(legal.sum())},
         'value': round(val, 4),
         # 上游 value 是「当前走子方」视角；同时给黑白两个百分数，避免口径混淆
+        # 🚨 value_black_pct 是「黑方优势」(-100~100)，不是胜率 ——
+        #    前端拿 `100 - value_black_pct` 当白方胜率会算出 136% 这种数。
+        #    胜率要走 50+50v 映射，单独给字段，别让调用方自己猜口径。
         'value_black_pct': round(100.0 * (val if board.current_player == BLACK else -val), 2),
+        'win_black_pct': round(50.0 + 50.0 * (val if board.current_player == BLACK else -val), 2),
+        'win_white_pct': round(50.0 - 50.0 * (val if board.current_player == BLACK else -val), 2),
         'stones': board_to_stones(board),
     }
 
