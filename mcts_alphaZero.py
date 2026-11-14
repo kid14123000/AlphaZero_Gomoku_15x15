@@ -88,7 +88,7 @@ class TreeNode(object):
 class MCTS(object):
     """An implementation of Monte Carlo Tree Search."""
 
-    def __init__(self, policy_value_fn, c_puct=5, n_playout=10000):
+    def __init__(self, policy_value_fn, c_puct=5.0, n_playout=10000):
         """
         policy_value_fn: a function that takes in a board state and outputs
             a list of (action, probability) tuples and also a score in [-1, 1]
@@ -103,6 +103,38 @@ class MCTS(object):
         self._c_puct = c_puct
         self._n_playout = n_playout
         self.last_root_q = 0.0      # 每次 get_move_probs 后更新（value 软标签用）
+        # ── 根先验 Dirichlet 噪声（AGZ 论文式，2026-11-14 起）──────────────
+        # 上游 junxiaosong 把噪声加在"落子抽样"上：(1-ε)p + ε·Dir，树里的根先验不加噪。
+        # 后果: 搜索从不探索 → 访问分布很尖；而落子可能被噪声拽到另一个点 ⇒
+        #       同一局面「标签说走 A、实际走了 B」，A 的信息全废，策略头目标比搜索实际相信的更自信。
+        # 现在按论文改成: 每手把噪声注入**根子节点的 _P**，之后 N 次模拟共享（与 v24 第 326-337 行同口径）。
+        self.root_noise_applied = 0     # 注入次数（行为指纹用）
+        self.last_root_noise_stats = None
+
+    def _add_root_dirichlet(self, epsilon, alpha):
+        """把 Dirichlet 噪声混进【根节点各子节点的先验 P】，返回是否注入成功。
+
+        与 AGZ/v24 一致: P ← (1-ε)·P + ε·Dir(α)。只在根的子节点上做一次，
+        后续 N 次模拟都在这份加过噪的先验下搜索 ⇒ 访问分布本身变宽，
+        训练标签（访问数）与落子因此同源。
+        """
+        if not self._root._children:
+            return False                # 根还没展开（首次 playout 前），调用方稍后重试
+        acts = list(self._root._children.keys())
+        k = len(acts)
+        noise = np.random.dirichlet([alpha] * k)
+        for i, a in enumerate(acts):
+            node = self._root._children[a]
+            node._P = (1.0 - epsilon) * node._P + epsilon * float(noise[i])
+        ps = np.array([n._P for n in self._root._children.values()],
+                      dtype=np.float64)
+        self.last_root_noise_stats = {
+            'k': k, 'sum': float(ps.sum()), 'max': float(ps.max()),
+            'top1_share': float(ps.max() / max(ps.sum(), 1e-12)),
+        }
+        self.root_noise_applied += 1
+        return True
+
 
     def _playout(self, state):
         """Run a single playout from the root to the leaf, getting a value at
@@ -137,15 +169,25 @@ class MCTS(object):
         # Update value and visit count of nodes in this traversal.
         node.update_recursive(-leaf_value)
 
-    def get_move_probs(self, state, temp=1e-3):
+    def get_move_probs(self, state, temp=1e-3, root_noise=None):
         """Run all playouts sequentially and return the available actions and
         their corresponding probabilities.
         state: the current game state
         temp: temperature parameter in (0, 1] controls the level of exploration
+        root_noise: None 或 (epsilon, alpha)。给定时把 Dirichlet 噪声注入根子节点
+            先验（只注入一次，之后全部模拟共享）—— AGZ/v24 口径。
+            注入时机: 根已有子节点就在第一次模拟之前，否则在第一次模拟把根
+            展开之后立刻注入（新树的首手必然走这条分支）。
         """
+        _noised = False
         for n in range(self._n_playout):
+            if root_noise is not None and not _noised and self._root._children:
+                _noised = self._add_root_dirichlet(*root_noise)
             state_copy = copy.deepcopy(state)
             self._playout(state_copy)
+        # 兜底: n_playout 很小或首轮展开发生在最后一步时，补注入一次
+        if root_noise is not None and not _noised and self._root._children:
+            self._add_root_dirichlet(*root_noise)
 
         # 根节点的搜索价值（**根节点该走方视角**）。
         # 供 value 头的软标签使用：搜索结果比网络单次前向可靠，
@@ -195,8 +237,8 @@ class MCTSPlayer(object):
     """AI player based on MCTS"""
 
     def __init__(self, policy_value_function,
-                 c_puct=5, n_playout=2000, is_selfplay=0,
-                 dirichlet_eps=0.25, dirichlet_alpha=0.3):
+                 c_puct=5.0, n_playout=2000, is_selfplay=0,
+                 dirichlet_eps=0.25, dirichlet_alpha=0.3, root_noise=False):
         self.mcts = MCTS(policy_value_function, c_puct, n_playout)
         self._is_selfplay = is_selfplay
         # 自我对弈探索噪声（AlphaZero 原论文 ε=0.25, α=0.3）。
@@ -206,6 +248,9 @@ class MCTSPlayer(object):
         #    实测把 ε 降到 0.10 后探索手比例降到 ~11%。
         self._dirichlet_eps = dirichlet_eps
         self._dirichlet_alpha = dirichlet_alpha
+        # root_noise=True: 噪声注入根先验（AGZ 论文式 / v24 口径）
+        # root_noise=False: 旧行为，噪声只混进"落子抽样"分布
+        self._root_noise = bool(root_noise)
 
     def set_player_ind(self, p):
         self.player = p
@@ -218,20 +263,27 @@ class MCTSPlayer(object):
         # the pi vector returned by MCTS as in the alphaGo Zero paper
         move_probs = np.zeros(board.width*board.height)
         if len(sensible_moves) > 0:
-            acts, probs = self.mcts.get_move_probs(board, temp)
+            # root_noise=True → 噪声进根先验（搜索会去探索，标签=访问数，与落子同源）
+            _rn = ((self._dirichlet_eps, self._dirichlet_alpha)
+                   if (self._is_selfplay and self._root_noise) else None)
+            acts, probs = self.mcts.get_move_probs(board, temp, root_noise=_rn)
             # 训练标签用不含温度的访问分布（last_label），落子用带温度的 probs。
             # 温度只影响「怎么选」，不该影响「学什么」。
             move_probs[list(acts)] = getattr(self.mcts, 'last_label', probs)
             if self._is_selfplay:
-                # add Dirichlet Noise for exploration (needed for
-                # self-play training)。ε/α 由构造参数决定，默认保持上游 0.25/0.3。
-                _eps = getattr(self, '_dirichlet_eps', 0.25)
-                _alpha = getattr(self, '_dirichlet_alpha', 0.3)
-                _noise = np.random.dirichlet(_alpha * np.ones(len(probs)))
-                move = np.random.choice(
-                    acts,
-                    p=(1.0 - _eps) * probs + _eps * _noise
-                )
+                if self._root_noise:
+                    # 噪声已经进根先验（每手一次，N 次模拟共享）⇒ 落子只按
+                    # 温度采样 probs，绝不再叠一次噪声（否则等于双重加噪）。
+                    move = np.random.choice(acts, p=probs)
+                else:
+                    # 旧行为: 噪声只混进落子抽样，树里不加噪
+                    _eps = getattr(self, '_dirichlet_eps', 0.25)
+                    _alpha = getattr(self, '_dirichlet_alpha', 0.3)
+                    _noise = np.random.dirichlet(_alpha * np.ones(len(probs)))
+                    move = np.random.choice(
+                        acts,
+                        p=(1.0 - _eps) * probs + _eps * _noise
+                    )
                 # update the root node and reuse the search tree
                 self.mcts.update_with_move(move)
             else:

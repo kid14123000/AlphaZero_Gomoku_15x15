@@ -247,3 +247,20 @@ cd ~/AlphaZero_Gomoku
 - `checkpoints/ckpt_it{N}.model`：每次 `check_freq` 归档一份，**不可变**，续训/回溯用这个
 - `logs/metrics.jsonl`：全谱系追加（多次 start 记录共存，看板取最后一条当配置）
 - `logs/train_10000.log`：训练 stdout
+
+## 版本历史（15×15 v4 线，追加式）
+
+### 2026-11-14 12:19 搜索结构改动：噪声进根先验 + c_puct 5→1.25
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| Dirichlet 噪声位置 | 只混进**落子抽样** `(1-ε)p+ε·Dir`，树里不加噪 | 注入**根子节点先验** `P←(1-ε)P+ε·Dir`，每手一次、N 次模拟共享（AGZ/v24 口径） |
+| `c_puct` | 5（junxiaosong 上游默认） | **1.25**（v24 同款有效值；LZ 用 0.5，公式不同不可直接比） |
+| 落子抽样 | 噪声 + 温度采样 | 只按温度采样 `probs`（不叠噪声，避免双重加噪） |
+
+- 开关：`--root_noise 1|0`、`--c_puct N`（也可用 env `GOMOKU_ROOT_NOISE` / `GOMOKU_C_PUCT`），旧行为可 0 回退。
+- 代码：`mcts_alphaZero.py`（`MCTS._add_root_dirichlet` / `get_move_probs(root_noise=)` / `MCTSPlayer(root_noise=)`）、`worker_selfplay.py`、`parallel_train.py`、`train.py`。
+- 证据（同权重同开局同种子，200 sim × 6 手）：被访问根子节点数 **66.8 → 106.0（只换噪声）→ 113.0（只降 c）→ 113.3（组合）**；根先验 ΣP 保持 ≈1。
+- 线上续跑：`ckpt_it13467.model` + `batch_offset 13467`，lr_multiplier 0.0878 保持。
+- 观测：首 3 局手数 21/25/25（改前中位 19~20）⇒ **对局变长、每局样本变多**，局/分下降属预期，不是效率回归。
+- 审计：`logs/metrics.jsonl` 的 `start` 记录新增 `c_puct` / `root_noise` 字段。

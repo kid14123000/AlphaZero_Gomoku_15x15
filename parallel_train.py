@@ -65,6 +65,8 @@ def spawn(wid, args, logdir):
            '--temp', str(args.temp),
            '--dirichlet_eps', str(args.dirichlet_eps),
            '--dirichlet_alpha', str(args.dirichlet_alpha),
+           '--c_puct', str(args.c_puct),
+           '--root_noise', str(args.root_noise),
            '--temp_switch', str(args.temp_switch),
            '--device', 'cuda' if args.use_gpu else 'cpu']
     if args.temp_after is not None:
@@ -158,6 +160,13 @@ def main():
     ap.add_argument('--dirichlet_eps', type=float, default=0.25,
                     help='自我对弈探索噪声 ε（上游 0.25；9×9 短局建议 0.10）')
     ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
+    # 2026-11-14（用户拍板）：c_puct 5 → 1.25，噪声搬到根先验（AGZ/v24 口径）
+    ap.add_argument('--c_puct', type=float,
+                    default=float(os.environ.get('GOMOKU_C_PUCT', '1.25')),
+                    help='PUCT 探索常数（v24 有效值 1.25；junxiaosong 上游默认 5）')
+    ap.add_argument('--root_noise', type=int,
+                    default=int(os.environ.get('GOMOKU_ROOT_NOISE', '1')),
+                    help='1=Dirichlet 噪声注入根先验(论文式)；0=旧行为(只混落子抽样)')
     ap.add_argument('--temp_switch', type=int, default=0,
                     help='前 N 手用 --temp，之后切 --temp_after（0=不调度）')
     ap.add_argument('--temp_after', type=float, default=None)
@@ -199,6 +208,9 @@ def main():
              args.n_in_row, args.n_playout), flush=True)
     print(' 目标 %d 局  每 %d 局发版权重  每 %d 局存检查点'
           % (args.game_batch_num, args.publish_every, args.check_freq), flush=True)
+    print(' 搜索: c_puct=%.2f  根先验噪声=%s (ε=%.2f α=%.2f)  模拟 %d/手'
+          % (args.c_puct, 'ON' if args.root_noise else 'OFF(旧行为·只混落子抽样)',
+             args.dirichlet_eps, args.dirichlet_alpha, args.n_playout), flush=True)
     print(' 设备 %s' % ('GPU' if args.use_gpu else 'CPU'), flush=True)
     print('=' * 66, flush=True)
 
@@ -229,6 +241,12 @@ def main():
                temp_after=args.temp_after)
     if 'use_gpu' in inspect.signature(TrainPipeline.__init__).parameters:
         tkw['use_gpu'] = args.use_gpu
+    # c_puct / root_noise 只在本 fork 的 TrainPipeline 里有（9×9 fork 没这两个参数）
+    _sigparams = inspect.signature(TrainPipeline.__init__).parameters
+    if 'c_puct' in _sigparams:
+        tkw['c_puct'] = args.c_puct
+    if 'root_noise' in _sigparams:
+        tkw['root_noise'] = args.root_noise
     trainer = TrainPipeline(**tkw)
     # 🚨 必须手动对齐全局局号：TrainPipeline.__init__ 把 game_batch_cur 初始化成 0，
     #    单进程版靠 run() 里的 `self.game_batch_cur = self.batch_offset + i + 1` 补上，

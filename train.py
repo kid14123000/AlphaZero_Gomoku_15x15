@@ -60,7 +60,8 @@ class TrainPipeline():
                  rapfi_bin=None, rapfi_depth=2, rapfi_every=0, rapfi_games=4,
                  rapfi_who='absolute', eval_pure=0, value_target='z',
                  dirichlet_eps=0.25, dirichlet_alpha=0.3,
-                 temp_switch=0, temp_after=None):
+                 temp_switch=0, temp_after=None,
+                 c_puct=None, root_noise=None):
         # params of the board and the game
         self.board_width = board_width
         self.board_height = board_height
@@ -77,7 +78,13 @@ class TrainPipeline():
         self.temp_switch = int(temp_switch)
         self.temp_after = temp_after
         self.n_playout = n_playout  # num of simulations for each move
-        self.c_puct = 5
+        # 2026-11-14: c_puct 5 → 1.25（v24 同款有效值）。5 = junxiaosong 上游默认，
+        # 几乎完全跟着网络先验走，800 次模拟的纠错被浪费；LZ 用 0.5 但公式不同不可比。
+        self.c_puct = (float(c_puct) if c_puct is not None
+                       else float(os.environ.get('GOMOKU_C_PUCT', '1.25')))
+        # 噪声注入位置：True=根先验(AGZ/v24 式) / False=旧行为(只混落子抽样)
+        self.root_noise = (bool(int(root_noise)) if root_noise is not None
+                           else bool(int(os.environ.get('GOMOKU_ROOT_NOISE', '1'))))
         self.buffer_size = 10000
         self.batch_size = batch_size  # mini-batch size for training
         self.data_buffer = deque(maxlen=self.buffer_size)
@@ -130,6 +137,8 @@ class TrainPipeline():
                          init_model_used=bool(init_model),
                          init_lr_multiplier=init_lr_multiplier,
                          eval_pure=int(eval_pure),
+                         c_puct=self.c_puct,
+                         root_noise=int(self.root_noise),
                          rapfi_every=rapfi_every,
                          rapfi_depth=rapfi_depth,
                          value_target=self.value_target)
@@ -149,7 +158,8 @@ class TrainPipeline():
                                       n_playout=self.n_playout,
                                       is_selfplay=1,
                                       dirichlet_eps=self.dirichlet_eps,
-                                      dirichlet_alpha=self.dirichlet_alpha)
+                                      dirichlet_alpha=self.dirichlet_alpha,
+                                      root_noise=self.root_noise)
         # q/mix 模式：开跑前先验符号。反了就拒绝启动，别白跑几百局才发现。
         if self.value_target in ('q', 'mix'):
             self._selfcheck_q_sign()

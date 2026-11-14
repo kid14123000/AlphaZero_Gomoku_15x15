@@ -49,7 +49,14 @@ def main():
     ap.add_argument('--n_in_row', type=int, default=5)
     ap.add_argument('--n_playout', type=int, default=800)
     ap.add_argument('--temp', type=float, default=1.0)
-    ap.add_argument('--c_puct', type=float, default=5.0)
+    # 2026-11-14: c_puct 5 → 1.25（v24 同款有效值；LZ 是 0.5，公式不同不可直接比）。
+    # 5 是 junxiaosong 上游默认，意味着几乎完全跟着网络先验走，800 次模拟的纠错被浪费。
+    ap.add_argument('--c_puct', type=float,
+                    default=float(os.environ.get('GOMOKU_C_PUCT', '1.25')),
+                    help='PUCT 探索常数（v24 用 1.25；上游默认 5）')
+    ap.add_argument('--root_noise', type=int,
+                    default=int(os.environ.get('GOMOKU_ROOT_NOISE', '1')),
+                    help='1=Dirichlet 噪声注入【根先验】(AGZ/v24 式)；0=旧行为(只混落子抽样)')
     ap.add_argument('--dirichlet_eps', type=float, default=0.25,
                     help='自我对弈探索噪声权重 ε；上游 0.25，短局建议 0.10')
     ap.add_argument('--dirichlet_alpha', type=float, default=0.3)
@@ -98,20 +105,24 @@ def main():
     player = MCTSPlayer(net.policy_value_fn, c_puct=args.c_puct,
                         n_playout=args.n_playout, is_selfplay=1,
                         dirichlet_eps=args.dirichlet_eps,
-                        dirichlet_alpha=args.dirichlet_alpha)
+                        dirichlet_alpha=args.dirichlet_alpha,
+                        root_noise=bool(args.root_noise))
     board = Board(width=args.board, height=args.board, n_in_row=args.n_in_row)
     game = Game(board)
 
     print('[w%d] 就绪  device=%s  par=%s  ver=%d  sims=%d  eps=%.2f  alpha=%.2f  temp=%s/%s@%d'
+          '  c_puct=%.2f  root_noise=%s(实际=%s)'
           % (wid, 'cuda' if use_gpu else 'cpu',
              format(sum(p.numel() for p in net.policy_value_net.parameters()), ','),
              cur_ver, args.n_playout, args.dirichlet_eps, args.dirichlet_alpha,
              args.temp, args.temp_after if args.temp_after is not None else '-',
-             args.temp_switch),
+             args.temp_switch,
+             args.c_puct, args.root_noise, player._root_noise),
           flush=True)
 
     seq = 0
     n_done = 0
+    _rn_prev = 0            # 上一局结束时的根噪声累计注入次数（算本局增量）
     while True:
         if os.path.exists(stop_path):
             print('[w%d] 收到 STOP，共打 %d 局' % (wid, n_done), flush=True)
@@ -158,6 +169,16 @@ def main():
         touch(hb_path, '%f\n' % time.time())
         print('[w%d] 第%d局  %d手  winner=%d  %.0fs  ver=%d'
               % (wid, n_done, len(play_data), winner, dt, cur_ver), flush=True)
+        # 行为指纹：根先验噪声应"每手注入一次"。注入次数应 = 本局手数（树被 reset 时
+        # 首手需等根展开，仍是 1 次/手）。sum≈1.0 说明噪声按 ε/α 正确归一化。
+        if args.root_noise:
+            _tot = player.mcts.root_noise_applied
+            _st = player.mcts.last_root_noise_stats or {}
+            print('[w%d]   根噪声: 本局 %d 次 / 累计 %d  K=%s Σ=%s 最大先验占比=%s'
+                  % (wid, _tot - _rn_prev, _tot, _st.get('k'),
+                     ('%.4f' % _st['sum']) if _st else '-',
+                     ('%.3f' % _st['top1_share']) if _st else '-'), flush=True)
+            _rn_prev = _tot
 
     return 0
 
