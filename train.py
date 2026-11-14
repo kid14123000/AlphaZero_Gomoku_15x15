@@ -22,10 +22,7 @@ try:                                    # Rapfi 未安装时不影响训练
 except Exception:                       # noqa: BLE001
     RapfiPlayer = None
     RapfiError = Exception
-# from policy_value_net import PolicyValueNet  # Theano and Lasagne
-from policy_value_net_pytorch import PolicyValueNet  # Pytorch
-# from policy_value_net_tensorflow import PolicyValueNet # Tensorflow
-# from policy_value_net_keras import PolicyValueNet # Keras
+from policy_value_net_pytorch import PolicyValueNet  # Pytorch（本仓唯一实现）
 
 
 class MetricsLogger(object):
