@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# GitHub 公开仓库 main 是「发布快照」，必须由 tools/publish_github_snapshot.sh 生成。
+# 这个 hook 拦住「把开发分支直接推成 main」—— 2026-11-15 就这么丢过一次
+# 公开版 README 和 docs/img 等 8 份发布物料（还带上了 6 个悬空 .pt 软链）。
+#
+# 安装（一次性）：cp tools/git-hooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+# 注意：git push 不会把远端 URL 传给 hook，所以无法按 URL 区分 github / gitee。
+# 取而代之：只在「目标分支是 main」时校验快照形状（gitee 从不用 main，互不影响）。
+set -euo pipefail
+
+PUB_README_BLOB="$(git rev-parse 'HEAD:docs/README_github.md' 2>/dev/null || true)"
+[ -n "$PUB_README_BLOB" ] || PUB_README_BLOB="$(git hash-object docs/README_github.md 2>/dev/null || true)"
+
+STATUS=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$remote_ref" = "refs/heads/main" ] || continue
+  [ "$local_sha" = "0000000000000000000000000000000000000000" ] && continue   # 删除分支，放行
+
+  bad=0
+  if [ -n "$PUB_README_BLOB" ]; then
+    rb="$(git rev-parse "${local_sha}:README.md" 2>/dev/null || echo none)"
+    [ "$rb" = "$PUB_README_BLOB" ] || { echo "✗ README.md 不是公开版（应为 docs/README_github.md）"; bad=1; }
+  fi
+  if git ls-tree -r --name-only "$local_sha" | grep -q '\.pt$'; then
+    echo "✗ 快照里含 .pt（多半是指向 checkpoints/ 的悬空软链）"; bad=1
+  fi
+  for p in requirements.txt docs/make_board.py docs/make_charts.py docs/make_charts2.py \
+           docs/img/human_vs_net.png docs/img/layout_evolution.png \
+           docs/img/opening_heatmap.png docs/img/training_curves.png; do
+    git cat-file -e "${local_sha}:$p" 2>/dev/null || { echo "✗ 缺发布物料：$p"; bad=1; }
+  done
+  if git ls-tree -r --name-only "$local_sha" | grep -qE '^logs/'; then
+    echo "✗ 快照里含 logs/ 目录"; bad=1
+  fi
+
+  if [ "$bad" = "1" ]; then
+    cat >&2 <<'EOF'
+
+拒绝推送到 main：这不是一份合格的发布快照。
+请改用：./tools/publish_github_snapshot.sh "提交信息"
+（自动叠上公开版 README + 8 份发布物料、剔除 .pt，并做四项核验）
+EOF
+    STATUS=1
+  fi
+done
+exit $STATUS

@@ -10,7 +10,7 @@
 |---|---|---|
 | `train.py` | 改用 `policy_value_net_pytorch`；棋盘默认 15x15/五连；全部参数改成 argparse | 上游默认 Theano（已死）+ 硬编码 6x6 四连 |
 | `policy_value_net_pytorch.py` | `loss.data[0]`→`loss.item()`；`log_softmax` 显式 `dim=1`；`torch.FloatTensor(list)`→`torch.from_numpy(np.asarray(...,float32))` | 现代 PyTorch 兼容 + 训练集张量化提速 |
-| `human_play_15.py`（新增） | 人机对局，紧凑棋盘，可加载 `.model`，可退回纯 MCTS | 15x15 用上游 graphic 一屏放不下；上游 human_play 写死 8x8 且只读 numpy 权重 |
+| `human_play_15.py`（新增） | 人机对局，紧凑棋盘，可加载 `.model`，可退回纯 MCTS | 15x15 用上游 graphic 一屏放不下；上游 human_play 写死 8x8 且只读 numpy 权重（该文件已随上游遗留件一并删除） |
 | `run_15x15.sh`（新增） | 15x15 训练一键启动（尾部可追加任意 train.py 参数） | 免手敲参数 |
 | `resume.sh`（新增） | 断点续训一条命令，自动推导 `batch_offset` / `init_lr_multiplier` / 最新检查点 | 49 小时长跑，重启/崩溃后必须能无痛接上 |
 | `train.py` 续训三件套 | `--batch_offset`（全局局数编号）、`--init_lr_multiplier`（恢复自适应 lr）、`--ckpt_dir`（`checkpoints/ckpt_itN.model` 归档） | 见下「断点续训」 |
