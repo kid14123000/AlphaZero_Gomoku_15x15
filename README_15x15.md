@@ -262,5 +262,8 @@ cd ~/AlphaZero_Gomoku
 - 代码：`mcts_alphaZero.py`（`MCTS._add_root_dirichlet` / `get_move_probs(root_noise=)` / `MCTSPlayer(root_noise=)`）、`worker_selfplay.py`、`parallel_train.py`、`train.py`。
 - 证据（同权重同开局同种子，200 sim × 6 手）：被访问根子节点数 **66.8 → 106.0（只换噪声）→ 113.0（只降 c）→ 113.3（组合）**；根先验 ΣP 保持 ≈1。
 - 线上续跑：`ckpt_it13467.model` + `batch_offset 13467`，lr_multiplier 0.0878 保持。
-- 观测：首 3 局手数 21/25/25（改前中位 19~20）⇒ **对局变长、每局样本变多**，局/分下降属预期，不是效率回归。
+- 观测（重启后前 7 局）：均手 **20.2→28.0**、中位 **19→29**、≤11 手速杀 **18%→0%**、单局 194~330s（改前均 133s）
+  ⇒ 对局明显变长、速杀消失；**样本产出速率反而下降约 35%**（局/分 3.6→1.7，但每局手数 +39%），
+  原因是对局变长 + `Board.deepcopy` 随历史长度变贵。属预期副作用，**不是效率 bug**；判据待 ≥3 代再定。
+
 - 审计：`logs/metrics.jsonl` 的 `start` 记录新增 `c_puct` / `root_noise` 字段。
