@@ -111,9 +111,46 @@ def ingest(trainer, files, args, games_file):
         trainer.last_winner = winner
         trainer.episode_len = len(probs)
 
+        # ── value 目标：q/mix 档用 worker 收集的 MCTS 根 Q 替换最终胜负 ±1 ──
+        # 放在 metrics.log('game') 之前算，好把 Q 分布一起落盘（行为指纹）。
+        # 与单进程 train.py 的 collect_selfplay_data 同口径（那边也是替换第三元，
+        # get_equi_data 原样透传，训练代码不用改）。
+        target = zs
+        q_stats = {}
+        if getattr(trainer, 'value_target', 'z') != 'z':
+            if qs_in is None:
+                # worker 没存 qs：q/mix 档等于悄悄退回 ±1 硬标签，必须喊出来
+                if n % 25 == 1:
+                    print('  ⚠ value_target=%s 但 worker 没给 qs ⇒ 本局实际用的是 z（±1）'
+                          % trainer.value_target, flush=True)
+            else:
+                qs = np.asarray(qs_in, dtype=np.float32)
+                if len(qs) != len(zs):
+                    # 长度不一致同样只能退回 z；这是静默丢配置的第二种形态
+                    if n % 25 == 1:
+                        print('  ⚠ qs 长度 %d ≠ zs 长度 %d ⇒ 本局回退用 z'
+                              % (len(qs), len(zs)), flush=True)
+                else:
+                    if trainer.value_target == 'q':
+                        target = qs
+                    else:
+                        target = trainer.mix_lambda * qs + (1.0 - trainer.mix_lambda) * zs
+                    q_stats = {
+                        'q_mean': round(float(qs.mean()), 4),
+                        'q_std': round(float(qs.std()), 4),
+                        'q_absmean': round(float(np.abs(qs).mean()), 4),
+                        't_mean': round(float(target.mean()), 4),
+                        't_std': round(float(target.std()), 4),
+                    }
+                    if n % 25 == 1:
+                        print('  q 分布  mean %+.4f  std %.4f  absmean %.4f'
+                              % (q_stats['q_mean'], q_stats['q_std'],
+                                 q_stats['q_absmean']), flush=True)
+
         trainer.metrics.log('game', batch=n, episode_len=int(len(probs)),
                            winner=winner, worker=wid, black_sims=black_sims,
-                           game_seconds=round(secs, 1), net_version=ver)
+                           game_seconds=round(secs, 1), net_version=ver,
+                           **q_stats)
 
         if games_file:
             try:
@@ -127,21 +164,6 @@ def ingest(trainer, files, args, games_file):
             except Exception as e:          # noqa: BLE001
                 print('save_games failed:', e, flush=True)
 
-        # value 目标：q/mix 档用 worker 收集的 MCTS 根 Q 替换最终胜负 ±1。
-        # 与单进程 train.py 的 collect_selfplay_data 同口径（那边也是替换第三元，
-        # get_equi_data 原样透传，训练代码不用改）。
-        target = zs
-        if getattr(trainer, 'value_target', 'z') != 'z' and qs_in is not None:
-            qs = np.asarray(qs_in, dtype=np.float32)
-            if len(qs) == len(zs):
-                if trainer.value_target == 'q':
-                    target = qs
-                else:
-                    target = trainer.mix_lambda * qs + (1.0 - trainer.mix_lambda) * zs
-                if n % 25 == 1:
-                    print('  q 分布  mean %+.4f  std %.4f  absmean %.4f'
-                          % (float(qs.mean()), float(qs.std()),
-                             float(np.abs(qs).mean())), flush=True)
         # ── 分层采样标签：(行动方 × 胜负) 0=B走&B赢 1=B走&B输 2=W走&W赢 3=W走&W输 ──
         # 主进程不自己下棋（样本来自 npz），所以打标签放在这里，而不是 collect_selfplay_data
         _wmin = int(getattr(trainer, 'short_white_win_min', 20))
