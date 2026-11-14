@@ -115,9 +115,10 @@ print('%.2f' % (statistics.median(d) if d else 12.0))
 
 CMD=("$PY" train.py
   --board_width 15 --board_height 15 --n_in_row 5
-  --n_playout 400 --check_freq 50 --batch_size 512 --epochs 5
+  --n_playout "${N_PLAYOUT:-800}" --check_freq 50 --batch_size 512 --epochs 5
   --pure_mcts_playout_num 100
   --eval_pure 0                      # 对纯 MCTS 评估已饱和(长期100%)，关闭省机时
+  --value_target "${VALUE_TARGET:-q}" # 🚨 必须显式传：argparse 默认 z，漏了会静默退回 ±1 硬标签
   --save-games logs/games.jsonl      # 白棋开局面板靠它，丢了 dashboard 会没数据
   --ckpt_dir checkpoints
   --game_batch_num "$TOTAL" --batch_offset "$N"
@@ -127,6 +128,8 @@ CMD=("$PY" train.py
 echo "──────────────────────────────────────────────"
 echo " 从检查点   : $CKPT  (已完成 $N / $TOTAL 局)"
 echo " 恢复 lr×   : $LR"
+echo " value 目标 : ${VALUE_TARGET:-q}（q=根搜索价值软标签 / z=终局±1 / mix=各半）"
+echo " 每手模拟   : ${N_PLAYOUT:-800}"
 echo " 本次要跑   : $((TOTAL - N)) 局"
 echo " 纯MCTS评估 : 关闭（改看 Rapfi 锚点）"
 echo " 单局耗时   : ${SEC_PER_GAME}s（最近 40 局实测中位）"
