@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网络前向 · 15×15 五子棋</title>
+<link rel="stylesheet" href="/static/gomoku.css">
+<script src="/static/gomoku.js"></script>
+</head>
+<body>
+<h1>🧠 网络前向 <small>逐层激活 + policy/value 双头</small></h1>
+<div class="sub">摆任意局面 → 一次干净前向（不走搜索、不加噪声），看每一层把棋盘看成了什么。</div>
+
+<div class="wrap">
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="setup" class="board"></canvas>
+      <div class="thinking" id="thinking1"><div class="spinner"></div><span>前向中…</span></div>
+    </div>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="ctl" style="margin-bottom:6px">
+        <span style="font-size:12px;color:#64748b">当前该走：</span>
+        <b id="curColor" style="color:#93c5fd">⚫ 黑</b>
+        <span class="hint" style="margin:0" id="setupInfo">空盘</span>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <button class="tiny" onclick="ed.undo()">↩ 回退</button>
+        <button class="tiny" onclick="ed.clear()">🗑 清空</button>
+        <button class="tiny" onclick="takeGameBoard()">📋 取对弈局面</button>
+        <select id="posList" class="tiny" onmousedown="this.value=''" onchange="loadPos()" style="max-width:110px">
+          <option value="">载入…</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="result" class="board"></canvas>
+      <div class="thinking" id="thinking2"><div class="spinner"></div><span>前向中…</span></div>
+    </div>
+    <div class="card" style="margin-top:10px;padding:10px 12px">
+      <div class="ctl" style="margin-bottom:0">
+        <label style="min-width:auto">棋盘显示</label>
+        <select id="heatMode" onchange="drawResult()">
+          <option value="policy">policy 概率</option>
+          <option value="none">不显示热力图</option>
+        </select>
+        <span class="hint" style="margin:0">金色 ★ = policy Top1</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">前向设置</div>
+      <div class="ctl">
+        <label>权重</label>
+        <select id="model" style="flex:1"><option>加载中…</option></select>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <button class="primary" onclick="run()">▶ 跑一次前向</button>
+        <span class="hint" style="margin:0" id="runMeta"></span>
+      </div>
+    </div>
+
+    <div class="row" style="margin-bottom:12px">
+      <div class="card narrow" style="margin:0">
+        <div class="card-title">value 输出 <span class="t2">tanh</span></div>
+        <div class="big" id="valRaw">—</div>
+        <div class="sub" id="valSub" style="margin:5px 0 0">—</div>
+      </div>
+      <div class="card narrow" style="margin:0">
+        <div class="card-title">policy <span class="t2">softmax 熵</span></div>
+        <div class="big" id="polEnt">—</div>
+        <div class="sub" id="polSub" style="margin:5px 0 0">—</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">policy Top10</div>
+      <div class="scroll" id="polTop"><div class="empty">还没有数据</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">层统计</div>
+      <div class="scroll" id="layerTable" style="max-height:260px">
+        <div class="empty">还没有数据</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">计算图 <span class="t2">4 平面进 → 双头出</span></div>
+      <div class="dag" id="dag"><div class="empty">还没有数据</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="card-title">输入 4 平面 <span class="t2">ch0 当前方 / ch1 对手 / ch2 上一手 / ch3 执子色常量</span></div>
+  <div class="grids" id="inputs"><div class="empty">还没有数据</div></div>
+</div>
+
+<div class="card" style="margin-top:12px">
+  <div class="card-title">逐层激活 <span class="t2">每张图可切通道；红=正激活，蓝=负，越亮越强</span></div>
+  <div class="grids" id="layers"><div class="empty">还没有数据</div></div>
+</div>
+
+<script>
+renderNav('/network');
+
+let ed = null;
+let rview = null;
+let last = null;
+
+init();
+
+async function init() {
+  await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
+  ed = new PositionEditor($('setup'), {
+    size: 380,
+    onChange: (stones, cur) => {
+      $('curColor').innerHTML = cur === 1 ? '⚫ 黑' : '⚪ 白';
+      $('curColor').style.color = cur === 1 ? '#93c5fd' : '#fcd34d';
+      $('setupInfo').textContent = stones.length ? `${stones.length} 手` : '空盘';
+    },
+  });
+  rview = new BoardView($('result'), {size: BOARD_PX, showNumbers: true, hover: false});
+  try {
+    await fillModels('model');
+    $('model').value = $('model').options[0].value;
+  } catch (e) { alert('权重加载失败：' + e.message); }
+  refreshPositions();
+  run();     // 空盘先跑一次，页面不空着
+}
+
+function think(on) {
+  $('thinking1').classList.toggle('on', on);
+  $('thinking2').classList.toggle('on', on);
+}
+
+async function run() {
+  think(true);
+  const t0 = performance.now();
+  try {
+    const d = await api('/api/viz/network', {stones: ed.stones, model: $('model').value});
+    last = d;
+    $('runMeta').textContent = `${Math.round(performance.now() - t0)} ms`;
+    renderAll(d);
+  } catch (e) {
+    alert('前向失败：' + e.message);
+  } finally { think(false); }
+}
+
+function drawResult() {
+  if (!last) return;
+  const mode = $('heatMode').value;
+  const stones = last.stones.map(s => ({r: s.r, c: s.c, p: s.p, n: s.n}));
+  const marks = last.policy.top.slice(0, 5).map((t, i) => ({
+    r: t.r, c: t.c,
+    label: i === 0 ? '★' : String(i + 1),
+    color: i === 0 ? '#fbbf24' : '#38bdf8',
+    width: i === 0 ? 2.8 : 1.4,
+    r_px: i === 0 ? 16 : 14 - i,
+  }));
+  rview.setState({
+    stones,
+    lastMove: stones.length ? {r: stones[stones.length - 1].r, c: stones[stones.length - 1].c} : null,
+    heat: mode === 'policy' ? last.policy.grid : null,
+    heatMode: 'prob',
+    heatAlpha: mode === 'policy' ? .62 : 0,
+    marks: mode === 'policy' ? marks : [],
+  });
+}
+
+function renderAll(d) {
+  drawResult();
+
+  const v = d.value;
+  $('valRaw').textContent = fx(v, 3);
+  $('valSub').innerHTML =
+    `<span style="color:#93c5fd">黑胜 ${fx(d.win_black_pct, 1)}%</span> · ` +
+    `<span style="color:#fcd34d">白胜 ${fx(d.win_white_pct, 1)}%</span>` +
+    `<br><span style="color:#475569">value = 当前走子方（${d.player === 1 ? '黑' : '白'}）视角 · 黑方优势 ${fx(d.value_black_pct, 1)}</span>`;
+
+  $('polEnt').textContent = fx(d.policy.entropy, 3);
+  $('polSub').innerHTML = `最大 ${fx(d.policy.max_prob * 100, 1)}% · 合法点 ${d.policy.legal}` +
+    `<br><span style="color:#475569">均匀熵 = ln(合法点)</span>`;
+
+  $('polTop').innerHTML = `<table><thead><tr><th>点</th><th>概率</th><th>占最大</th></tr></thead><tbody>` +
+    d.policy.top.map((t, i) => `<tr>
+      <td>${i === 0 ? '★' : i + 1} ${t.r},${t.c}</td>
+      <td>${fx(t.prob * 100, 2)}%</td>
+      <td>${fx(100 * t.prob / d.policy.max_prob, 1)}%</td></tr>`).join('') +
+    '</tbody></table>';
+
+  $('layerTable').innerHTML = `<table><thead><tr>
+      <th>层</th><th>shape</th><th>激活率</th><th>均值</th><th>std</th><th>通道</th></tr></thead><tbody>` +
+    d.layers.map(L => `<tr>
+      <td>${L.name}</td>
+      <td style="color:#64748b">${L.shape.join('×')}</td>
+      <td>${fx(L.stats.active * 100, 1)}%</td>
+      <td>${fx(L.stats.mean, 3)}</td>
+      <td>${fx(L.stats.std, 3)}</td>
+      <td style="color:#64748b">${L.stats.channels}${L.stats.dead_ch ? ` (死 ${L.stats.dead_ch})` : ''}</td>
+    </tr>`).join('') + '</tbody></table>';
+
+  // 计算图
+  const byName = {};
+  d.layers.forEach(L => { byName[L.name] = L; });
+  const node = (n, cls) => {
+    const L = byName[n];
+    if (!L) return '';
+    return `<div class="node ${cls || ''}"><span class="nm">${L.name}</span>
+      <span class="op">${L.op}</span>
+      <span class="pp">${L.params ? L.params.toLocaleString() : '—'}</span></div>`;
+  };
+  $('dag').innerHTML = `
+    <div class="node"><span class="nm">input</span>
+      <span class="op">4 × 15 × 15 平面</span><span class="pp">—</span></div>
+    ${node('conv1')}${node('conv2')}${node('conv3')}
+    <div class="fork">├──────────┬──────────┤</div>
+    <div class="branch">
+      <div>
+        <div style="font-size:10.5px;color:#f472b6;text-align:center">policy 头</div>
+        ${node('act_conv1', 'pol')}${node('act_fc1', 'pol')}
+        <div class="node pol"><span class="nm">policy</span>
+          <span class="op">log_softmax(225) → ${d.policy.top[0] ?
+            `${d.policy.top[0].r},${d.policy.top[0].c}` : '—'}</span>
+          <span class="pp">${fx(d.policy.max_prob * 100, 1)}%</span></div>
+      </div>
+      <div>
+        <div style="font-size:10.5px;color:#4ade80;text-align:center">value 头</div>
+        ${node('val_conv1', 'val')}${node('val_fc1', 'val')}${node('val_fc2', 'val')}
+        <div class="node val"><span class="nm">value</span>
+          <span class="op">tanh → ${fx(d.value, 3)}</span>
+          <span class="pp">${fx(d.value_black_pct, 1)}% 黑</span></div>
+      </div>
+    </div>`;
+
+  // 输入平面
+  $('inputs').innerHTML = '';
+  d.inputs.forEach(pl => {
+    $('inputs').appendChild(mini(pl.label, pl.grid, 'act', 120));
+  });
+
+  // 逐层
+  $('layers').innerHTML = '';
+  d.layers.forEach(L => {
+    if (!L.maps.length) return;
+    const wrapEl = document.createElement('div');
+    wrapEl.className = 'mini';
+    const cv = document.createElement('canvas');
+    const select = document.createElement('select');
+    select.style.cssText = 'font-size:11px;margin-bottom:4px;max-width:150px';
+    L.maps.forEach((m, i) => {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = m.label;
+      select.appendChild(o);
+    });
+    const cap = document.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = `${L.name} ${L.shape.join('×')}`;
+    const holder = document.createElement('div');
+    const view = new BoardView(cv, {size: 150, showCoords: false, showNumbers: false, hover: false});
+    const paint = () => {
+      const m = L.maps[+select.value];
+      view.setState({stones: last.stones.map(s => ({r: s.r, c: s.c, p: s.p})),
+                     lastMove: null, heat: m.grid, heatMode: L.shape.length === 3 ? 'act' : 'prob',
+                     heatAlpha: .72, marks: []});
+    };
+    select.addEventListener('change', paint);
+    wrapEl.appendChild(select);
+    wrapEl.appendChild(cv);
+    wrapEl.appendChild(cap);
+    $('layers').appendChild(wrapEl);
+    paint();
+  });
+}
+
+function mini(label, grid, mode, size) {
+  const wrapEl = document.createElement('div');
+  wrapEl.className = 'mini';
+  const cv = document.createElement('canvas');
+  const cap = document.createElement('div');
+  cap.className = 'cap';
+  cap.textContent = label;
+  wrapEl.appendChild(cv);
+  wrapEl.appendChild(cap);
+  const view = new BoardView(cv, {size, showCoords: false, showNumbers: false, hover: false});
+  view.setState({stones: last ? last.stones.map(s => ({r: s.r, c: s.c, p: s.p})) : [],
+                 lastMove: null, heat: grid, heatMode: mode, heatAlpha: .72, marks: []});
+  return wrapEl;
+}
+
+/* ── 互通 ── */
+async function takeGameBoard() {
+  try {
+    const d = await api('/api/game/state');
+    if (!d.state || !d.state.moves.length) { alert('对弈页还没有局面'); return; }
+    ed.set(d.state.moves);
+    run();
+  } catch (e) { alert('读取失败：' + e.message); }
+}
+
+async function refreshPositions() {
+  try {
+    const d = await api('/api/positions/list');
+    const sel = $('posList');
+    sel.innerHTML = '<option value="">载入…</option>';
+    d.positions.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name; o.textContent = `${p.name}（${p.n}）`;
+      sel.appendChild(o);
+    });
+  } catch (e) {}
+}
+
+async function loadPos() {
+  const name = $('posList').value;
+  if (!name) return;
+  try {
+    const d = await api('/api/positions/load', {name});
+    ed.loadFromServer(d.position.stones);
+    run();
+  } catch (e) { alert('载入失败：' + e.message); }
+}
+</script>
+</body>
+</html>

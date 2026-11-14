@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>五子棋 AlphaZero 驾驶舱</title>
+<script src="/static/chart.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f172a;color:#e2e8f0;padding:16px}
+h1{font-size:1.3rem;margin-bottom:12px;color:#38bdf8;display:flex;align-items:center;gap:10px}
+h1 small{font-size:.75rem;color:#64748b;font-weight:400}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.card{background:#1e293b;border-radius:10px;padding:14px;flex:1;min-width:200px}
+.card-title{font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;font-weight:600}
+.status-main{flex:1;min-width:240px;background:linear-gradient(135deg,#1e293b 0%,#1a2b45 100%);border:1px solid #2b3a55}
+.worker-panel{flex:2;min-width:380px}
+.chart-panel{flex:2;min-width:400px}
+.info-panel{flex:1;min-width:180px}
+.log-panel{width:100%}
+.big{font-size:2rem;font-weight:700;margin-bottom:2px;color:#e2e8f0}
+.big-unit{font-size:.85rem;color:#64748b;font-weight:400;margin-left:2px}
+.progress-track{background:#0f172a;border-radius:8px;height:12px;overflow:hidden;margin:10px 0 8px;border:1px solid #24324a}
+.progress-fill{height:100%;background:linear-gradient(90deg,#38bdf8,#4ade80);border-radius:8px;transition:width .6s ease;box-shadow:0 0 8px rgba(56,189,248,.4)}
+.phase{font-size:.75rem;padding:2px 10px;border-radius:20px;display:inline-block;font-weight:500}
+.phase-selfplay{background:#1e40af;color:#60a5fa}
+.phase-waiting_workers{background:#92400e;color:#fbbf24}
+.phase-learning_done{background:#14532d;color:#4ade80}
+.phase-saved{background:#14532d;color:#4ade80}
+.phase-checkpoint{background:#14532d;color:#4ade80}
+.phase-demo{background:#3b0764;color:#a78bfa}
+.phase-idle{background:#1e293b;color:#94a3b8}
+.phase-startup{background:#3b0764;color:#a78bfa}
+.wgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+.wi{padding:5px 6px;border-radius:6px;font-size:.75rem;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.w-running{background:#1e3a5f;color:#93c5fd;border-left:3px solid #3b82f6}
+.w-done{background:#14532d;color:#4ade80;border-left:3px solid #22c55e}
+.w-waiting{background:#1e293b;color:#94a3b8;border-left:3px solid #475569}
+.w-stale{background:#3f2d10;color:#fbbf24;border-left:3px solid #f59e0b}
+.wi-main{background:linear-gradient(135deg,#3e2818,#4a3220);color:#dcb35c;border-left:3px solid #dcb35c;font-weight:700;font-size:.78rem}
+.log-box{background:#0f172a;border-radius:6px;padding:8px 10px;font-family:'SF Mono','Cascadia Code',monospace;font-size:.72rem;line-height:1.7;height:260px;overflow-y:auto;color:#94a3b8}
+.log-box .hl{color:#e2e8f0}
+.ck-list{font-size:.78rem;max-height:150px;overflow-y:auto}
+.ck-list li{list-style:none;padding:2px 0;color:#94a3b8;display:flex;justify-content:space-between}
+.ck-list li span{color:#475569}
+.sub{font-size:.75rem;color:#64748b;margin-top:4px}
+#lastUpd{font-size:.7rem;color:#475569;margin-top:6px}
+.warn{color:#fbbf24;font-size:.75rem;margin-top:4px}
+
+/* ── 导航栏 ── */
+nav { display: flex; gap: 8px; padding: 0 0 14px; flex-wrap: wrap; }
+nav a { color: #7dd3fc; text-decoration: none; font-size: 13px; padding: 6px 14px; border: 1px solid #334155; border-radius: 6px; background: #0f172a; }
+nav a:hover { background: #1e293b; }
+nav a.active { background: #1e293b; border-color: #7dd3fc; color: #e2e8f0; }
+nav a i { margin-right: 5px; }
+</style>
+</head>
+<body>
+<nav>
+  <a href="/"><i>♟</i> 对弈</a>
+  <a href="/game9"><i>🎯</i> 9×9对弈</a>
+  <a href="/eval"><i>⚔️</i> 棋力测评</a>
+  <a href="/study"><i>🔬</i> 摆谱研究</a>
+  <a href="/dashboard" class="active"><i>📊</i> 训练监控</a>
+  <a href="/network"><i>🧠</i> 网络前向</a>
+  <a href="/mcts"><i>🔍</i> MCTS搜索</a>
+  <a href="/evolution"><i>🧬</i> 开局演化</a>
+  <a href="/replay"><i>🗂</i> 自对弈数据</a>
+<a href="/quiz"><i>📝</i> 出题</a>
+</nav>
+
+<h1>⚫ v4 训练监控 <small id="hdr">局数 / 吞吐 / loss·entropy / 黑白胜率 / 防守率 / 均手数</small></h1>
+
+<!-- ═══════ 指标区（v4 真实有的六个） ═══════ -->
+<div class="row">
+  <div class="card status-main" style="flex:1.4">
+    <div class="card-title">对局进度 <span id="runBadge" class="phase phase-idle" style="float:right">—</span></div>
+    <div class="big"><span id="curGames">—</span><span class="big-unit" id="tgtGames">/ —</span></div>
+    <div class="progress-track"><div class="progress-fill" id="progFill" style="width:0%"></div></div>
+    <div class="sub" id="progSub">—</div>
+    <div class="sub" id="rateSub" style="line-height:1.7">—</div>
+    <div class="sub" id="etaSub">—</div>
+  </div>
+
+  <div class="card" style="border:1px solid #7c2d12">
+    <div class="card-title">黑白胜率 <span id="wrSub2" style="color:#64748b;font-weight:400">—</span></div>
+    <div class="big" style="font-size:1.9rem">
+      <span id="bwr" style="color:#e2e8f0">—</span>
+      <span style="color:#475569;font-size:1.1rem">/</span>
+      <span id="wwr" style="color:#94a3b8">—</span>
+    </div>
+    <div class="progress-track" style="height:10px">
+      <div class="progress-fill" id="wrFill" style="width:50%;background:linear-gradient(90deg,#e2e8f0,#94a3b8)"></div>
+    </div>
+    <div class="sub" id="wrNote">—</div>
+  </div>
+
+  <div class="card" style="border:1px solid #164e63">
+    <div class="card-title">Loss / Entropy</div>
+    <div style="display:flex;gap:16px">
+      <div>
+        <div style="font-size:.7rem;color:#64748b">loss</div>
+        <div style="font-size:1.7rem;font-weight:700;color:#38bdf8" id="lossV">—</div>
+        <div class="sub" id="lossMA">—</div>
+      </div>
+      <div>
+        <div style="font-size:.7rem;color:#64748b">entropy</div>
+        <div style="font-size:1.7rem;font-weight:700;color:#a78bfa" id="entV">—</div>
+        <div class="sub" id="entMA">—</div>
+      </div>
+    </div>
+    <div class="sub" id="miscSub" style="line-height:1.7;margin-top:6px">—</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card" style="border:1px solid #166534">
+    <div class="card-title">防守率 <span id="defSub2" style="color:#64748b;font-weight:400">—</span></div>
+    <div class="big" style="color:#4ade80"><span id="defV">—</span><span class="big-unit">%</span></div>
+    <div class="progress-track" style="height:10px"><div class="progress-fill" id="defFill" style="width:0%;background:linear-gradient(90deg,#22c55e,#4ade80)"></div></div>
+    <div class="sub" id="defSub" style="line-height:1.7">—</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">均手数 <span id="lenSub2" style="color:#64748b;font-weight:400">—</span></div>
+    <div class="big"><span id="lenV">—</span><span class="big-unit">手</span></div>
+    <div class="sub" id="lenSub" style="line-height:1.7">—</div>
+  </div>
+
+  <div class="card worker-panel">
+    <div class="card-title">工兵 <span id="wSub" style="color:#64748b;font-weight:400">—</span></div>
+    <div class="wgrid" id="wGrid"></div>
+    <div class="sub" id="wNote" style="margin-top:6px">—</div>
+  </div>
+</div>
+
+<!-- ═══════ 曲线 ═══════ -->
+<div class="row">
+  <div class="card chart-panel" style="flex:2;min-height:240px">
+    <div class="card-title">Loss / Entropy 曲线 <span style="color:#64748b;font-weight:400">每次参数更新一个点（loss 左轴 · entropy 右轴）</span></div>
+    <div style="height:210px;position:relative"><canvas id="cLoss"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card chart-panel" style="min-height:220px">
+    <div class="card-title">黑白胜率趋势 <span style="color:#64748b;font-weight:400">每 250 局一档</span></div>
+    <div style="height:190px;position:relative"><canvas id="cWr"></canvas></div>
+  </div>
+  <div class="card chart-panel" style="min-height:220px">
+    <div class="card-title">均手数 / 防守率趋势 <span style="color:#64748b;font-weight:400">防守率随缓存积累逐步覆盖更多档</span></div>
+    <div style="height:190px;position:relative"><canvas id="cLen"></canvas></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="card info-panel">
+    <div class="card-title">检查点 <span id="ckSub" style="color:#475569;font-weight:400"></span></div>
+    <ul class="ck-list" id="ckList"></ul>
+  </div>
+  <div class="card log-panel" style="flex:3">
+    <div class="card-title">训练日志 <span id="logSub" style="color:#475569;font-weight:400"></span></div>
+    <div class="log-box" id="logBox">—</div>
+  </div>
+</div>
+
+<script>
+const PH = {running:['自对弈中','phase-selfplay'], stopped:['未在训练','phase-idle']};
+let chLoss=null, chWr=null, chLen=null, last=null;
+
+const fmt = (v, d=2) => (v===null||v===undefined||Number.isNaN(v)) ? '—' : (+v).toFixed(d);
+const pct = v => (v===null||v===undefined) ? '—' : (+v).toFixed(1)+'%';
+
+function makeChart(id, cfg){
+  const el = document.getElementById(id);
+  if (!el) return null;
+  return new Chart(el.getContext('2d'), cfg);
+}
+
+function renderKPIs(d){
+  const v = d.v4;
+  if (!v) {
+    document.getElementById('hdr').textContent = '⚠️ v4 指标收集失败 — 见 web 日志';
+    return;
+  }
+  const [txt, cls] = PH[v.running ? 'running' : 'stopped'];
+  const badge = document.getElementById('runBadge');
+  badge.textContent = txt; badge.className = 'phase ' + cls;
+
+  // ── 局数进度
+  document.getElementById('curGames').textContent = v.games_cur.toLocaleString();
+  document.getElementById('tgtGames').textContent = v.games_target ? '/ ' + v.games_target.toLocaleString() + ' 局' : '/ —';
+  document.getElementById('progFill').style.width = (v.games_pct || 0).toFixed(2) + '%';
+  document.getElementById('progSub').textContent =
+    `已完成 ${fmt(v.games_pct,2)}% · 累计落盘 ${v.total_games_logged.toLocaleString()} 局`;
+  document.getElementById('rateSub').innerHTML =
+    `吞吐 <b style="color:#38bdf8">${fmt(v.rate_per_min,2)}</b> 局/分 · ` +
+    `单局中位 <b style="color:#e2e8f0">${fmt(v.per_game_sec,0)}</b> s · ` +
+    `${v.workers} 工兵 × ${v.playout||'—'} sims · ${v.board}×${v.board}/${v.win}连`;
+  document.getElementById('etaSub').textContent = v.eta_hours
+    ? `剩余 ETA ${fmt(v.eta_hours,1)} 小时 ≈ ${fmt(v.eta_hours/24,1)} 天`
+    : 'ETA 无法计算';
+
+  // ── 黑白胜率
+  document.getElementById('bwr').textContent = '黑 ' + pct(v.black_wr);
+  document.getElementById('wwr').textContent = '白 ' + pct(v.white_wr);
+  document.getElementById('wrFill').style.width = v.black_wr + '%';
+  document.getElementById('wrSub2').textContent = `近 ${v.n_recent} 局`;
+  const gap = v.black_wr - v.white_wr;
+  document.getElementById('wrNote').textContent =
+    `和棋 ${pct(v.tie_rate)} · 黑白差 ${fmt(gap,1)} 个百分点` +
+    (gap > 25 ? ' · ⚠️ 先手红利显著' : gap > 15 ? ' · 先手占优' : ' · 较均衡');
+
+  // ── loss / entropy
+  document.getElementById('lossV').textContent = fmt(v.loss,4);
+  document.getElementById('lossMA').textContent = 'MA20 ' + fmt(v.loss_ma20,4);
+  document.getElementById('entV').textContent = fmt(v.entropy,4);
+  document.getElementById('entMA').textContent = 'MA20 ' + fmt(v.entropy_ma20,4);
+  document.getElementById('miscSub').innerHTML =
+    `explained_var ${fmt(v.ev_new,3)} · KL ${fmt(v.kl,4)} · lr×${fmt(v.lr_mult,3)} · 更新 ${v.n_updates.toLocaleString()} 次`;
+
+  // ── 防守率
+  const df = v.defense;
+  if (df && df.block !== null) {
+    document.getElementById('defV').textContent = fmt(df.block,1);
+    document.getElementById('defFill').style.width = df.block + '%';
+    document.getElementById('defSub2').textContent = `近 ${df.games} 局 / ${df.chances} 次机会`;
+    document.getElementById('defSub').innerHTML =
+      `必堵点堵住 <b style="color:#4ade80">${pct(df.must_block)}</b> · ` +
+      `活三挡住 <b style="color:#fbbf24">${pct(df.three_block)}</b>` +
+      `<br><span style="color:#475569">口径=对手下一手成五/成活四时本方是否落在那点上；自己已能连五的回合不计</span>`;
+  } else {
+    document.getElementById('defV').textContent = '—';
+    document.getElementById('defSub').textContent = '暂无（需要 games.jsonl 有对局手顺）';
+  }
+
+  // ── 均手数
+  document.getElementById('lenV').textContent = fmt(v.len_mean,1);
+  document.getElementById('lenSub2').textContent = `近 ${v.n_recent} 局`;
+  document.getElementById('lenSub').innerHTML =
+    `中位 <b style="color:#e2e8f0">${fmt(v.len_med,1)}</b> 手 · 和棋 ${pct(v.tie_rate)}` +
+    `<br><span style="color:#475569">均手数上升通常意味着棋风变稳/攻杀变难</span>`;
+
+  // ── 工兵
+  const wg = document.getElementById('wGrid');
+  const ws = d.workers || [];
+  wg.innerHTML = ws.map(w =>
+    `<div class="wi w-${w.alive?'running':'stale'}" title="工兵${w.worker}">w${w.worker}<br><span style="font-size:.65rem;opacity:.8">${w.games}局</span></div>`
+  ).join('') || '<div class="wi w-waiting">无</div>';
+  const tot = ws.reduce((a,b)=>a+(b.games||0),0);
+  document.getElementById('wSub').textContent = `${ws.length} 个`;
+  document.getElementById('wNote').textContent = tot ? `本轮各工兵累计 ${tot.toLocaleString()} 局` : '—';
+
+  // ── 检查点
+  const cks = (d.checkpoints || []).slice(-8).reverse();
+  document.getElementById('ckList').innerHTML = cks.map(c =>
+    `<li>ckpt_it${c}<span>${c>=v.games_cur-60?'最近':'历史'}</span></li>`).join('') || '<li>无</li>';
+  document.getElementById('ckSub').textContent = `共 ${(d.checkpoints||[]).length} 个`;
+}
+
+function renderCharts(d){
+  const v = d.v4;
+  if (!v) return;
+
+  // ── loss / entropy
+  const ls = v.loss_series || [];
+  const labels = ls.map(p => p.batch);
+  if (!chLoss) {
+    chLoss = makeChart('cLoss', {
+      type:'line',
+      data:{labels, datasets:[
+        {label:'loss', data:ls.map(p=>p.loss), borderColor:'#38bdf8', backgroundColor:'#38bdf8',
+         borderWidth:1.5, pointRadius:0, yAxisID:'y', tension:.25},
+        {label:'entropy', data:ls.map(p=>p.entropy), borderColor:'#a78bfa', backgroundColor:'#a78bfa',
+         borderWidth:1.5, pointRadius:0, yAxisID:'y1', tension:.25}
+      ]},
+      options:{responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index', intersect:false},
+        plugins:{legend:{labels:{color:'#94a3b8', boxWidth:10, font:{size:10}}}},
+        scales:{
+          x:{ticks:{color:'#475569', maxTicksLimit:8, font:{size:9}}, grid:{color:'#1e293b'}},
+          y:{position:'left', ticks:{color:'#38bdf8', font:{size:9}}, grid:{color:'#1e293b'}},
+          y1:{position:'right', ticks:{color:'#a78bfa', font:{size:9}}, grid:{display:false}}
+        }}
+    });
+  } else {
+    chLoss.data.labels = labels;
+    chLoss.data.datasets[0].data = ls.map(p=>p.loss);
+    chLoss.data.datasets[1].data = ls.map(p=>p.entropy);
+    chLoss.update('none');
+  }
+
+  // ── 黑白胜率
+  const se = v.series || [];
+  const sl = se.map(s => s.batch);
+  if (!chWr) {
+    chWr = makeChart('cWr', {
+      type:'line',
+      data:{labels:sl, datasets:[
+        {label:'黑胜%', data:se.map(s=>s.black), borderColor:'#e2e8f0', backgroundColor:'rgba(226,232,240,.12)',
+         borderWidth:1.6, pointRadius:0, fill:true, tension:.25},
+        {label:'白胜%', data:se.map(s=>s.white), borderColor:'#94a3b8', backgroundColor:'rgba(148,163,184,.10)',
+         borderWidth:1.6, pointRadius:0, fill:true, tension:.25},
+        {label:'和棋%', data:se.map(s=>s.tie), borderColor:'#f59e0b', borderWidth:1, pointRadius:0,
+         borderDash:[4,3], tension:.25}
+      ]},
+      options:{responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index', intersect:false},
+        plugins:{legend:{labels:{color:'#94a3b8', boxWidth:10, font:{size:10}}}},
+        scales:{
+          x:{ticks:{color:'#475569', maxTicksLimit:6, font:{size:9}}, grid:{color:'#1e293b'}},
+          y:{min:0, max:100, ticks:{color:'#64748b', font:{size:9}, callback:v=>v+'%'}, grid:{color:'#1e293b'}}
+        }}
+    });
+  } else {
+    chWr.data.labels = sl;
+    chWr.data.datasets[0].data = se.map(s=>s.black);
+    chWr.data.datasets[1].data = se.map(s=>s.white);
+    chWr.data.datasets[2].data = se.map(s=>s.tie);
+    chWr.update('none');
+  }
+
+  // ── 均手数 / 防守率
+  if (!chLen) {
+    chLen = makeChart('cLen', {
+      type:'line',
+      data:{labels:sl, datasets:[
+        {label:'均手数', data:se.map(s=>s.len), borderColor:'#38bdf8', backgroundColor:'#38bdf8',
+         borderWidth:1.6, pointRadius:0, yAxisID:'y', tension:.25},
+        {label:'防守率%', data:se.map(s=>s.block===undefined?null:s.block),
+         borderColor:'#4ade80', backgroundColor:'#4ade80', borderWidth:1.6, pointRadius:0,
+         yAxisID:'y1', spanGaps:true, tension:.25}
+      ]},
+      options:{responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index', intersect:false},
+        plugins:{legend:{labels:{color:'#94a3b8', boxWidth:10, font:{size:10}}}},
+        scales:{
+          x:{ticks:{color:'#475569', maxTicksLimit:6, font:{size:9}}, grid:{color:'#1e293b'}},
+          y:{position:'left', ticks:{color:'#38bdf8', font:{size:9}}, grid:{color:'#1e293b'}},
+          y1:{position:'right', min:0, max:100, ticks:{color:'#4ade80', font:{size:9}, callback:v=>v+'%'}, grid:{display:false}}
+        }}
+    });
+  } else {
+    chLen.data.labels = sl;
+    chLen.data.datasets[0].data = se.map(s=>s.len);
+    chLen.data.datasets[1].data = se.map(s=>s.block===undefined?null:s.block);
+    chLen.update('none');
+  }
+}
+
+let logLines = [];
+async function loadLog(){
+  try {
+    const r = await fetch('/api/v4_log?n=60').then(x=>x.json());
+    if (!r.ok) return;
+    logLines = r.lines || [];
+    const box = document.getElementById('logBox');
+    box.innerHTML = logLines.map(l => {
+      const hl = /^局 /.test(l);
+      return `<div class="${hl?'hl':''}">${l.replace(/</g,'&lt;')}</div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+    document.getElementById('logSub').textContent = r.path ? r.path.split('/').pop() : '';
+  } catch(e) {}
+}
+
+async function load(){
+  try {
+    const d = await fetch('/api/training', {cache:'no-store'}).then(r=>r.json());
+    last = d;
+    document.getElementById('hdr').textContent =
+      '局数 / 吞吐 / loss·entropy / 黑白胜率 / 防守率 / 均手数 · 更新于 ' + (d.time||'');
+    renderKPIs(d);
+    renderCharts(d);
+  } catch(e) {
+    document.getElementById('hdr').textContent = '❌ 拉取失败: ' + e;
+  }
+}
+
+load();
+loadLog();
+setInterval(() => { if (document.visibilityState==='visible') load(); }, 5000);
+setInterval(() => { if (document.visibilityState==='visible') loadLog(); }, 10000);
+</script>
+  <script src="/static/weights_live.js"></script>
+</body>
+</html>

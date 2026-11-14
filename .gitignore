@@ -1,0 +1,43 @@
+# ── Python ──
+*.pyc
+*.pyo
+__pycache__/
+
+# ── 虚拟环境（.venv 在本目录是指向 ~/AlphaZero_Gomoku/.venv 的符号链接）──
+.venv
+.venv/
+venv/
+.env
+
+# ── 训练产物：权重 / 日志 / 棋谱 一律不入库 ──
+checkpoints/
+*.model
+*.model2
+*.h5
+logs/
+*.jsonl
+*.log
+*.npz
+
+# 并行训练的队列与权重同步目录
+sync/
+queue/
+
+# ── 历史归档（体积大，另存）──
+legacy/
+
+# ── 评测/探针输出（每次跑都不同，属于数据不是代码）──
+eval_*.json
+games_*.json
+policy_center.json
+combat_cache.json
+
+# ── 系统垃圾 ──
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ── 回放索引（tools/build_replay_index.py 生成，125MB+，随时可重建）──
+gomoku_checkpoints/worker_data/
+gomoku_checkpoints/replay_pool_index.json

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>🧬 开局分布演化</title>
+<style>
+body{background:#0b1220;color:#e2e8f0;font-family:-apple-system,'PingFang SC',sans-serif;margin:0;padding:16px}
+nav{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+nav a{color:#7dd3fc;text-decoration:none;font-size:13px;padding:6px 14px;border:1px solid #334155;border-radius:6px;background:#0f172a}
+nav a:hover{background:#1e293b}
+nav a.active{background:#1e293b;border-color:#7dd3fc;color:#e2e8f0}
+h1{font-size:19px;margin:4px 0}
+.sec{border:1px solid #334155;border-radius:10px;padding:14px;margin:12px 0;background:#0f172a}
+.sec-title{font-weight:bold;color:#f1f5f9;margin-bottom:10px;font-size:14px}
+.card{border:1px solid #334155;border-radius:8px;padding:10px;background:#0f172a}
+.hot-v{color:#fbbf24;font-size:15px;font-weight:bold}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;margin:2px;background:#334155;color:#e2e8f0}
+.tag.best{background:#7c3aed;color:#fff}
+.ctrl{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.ctrl button{background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:6px 16px;font-size:13px;cursor:pointer}
+.ctrl button.primary{background:#7c3aed;color:#fff;border-color:#7c3aed;font-weight:600}
+.ctrl select,.ctrl input{background:#1e293b;color:#e2e8f0;border:1px solid #475569;border-radius:6px;padding:5px 8px;font-size:13px}
+input[type=range]{accent-color:#7c3aed;cursor:pointer;flex:1;min-width:200px}
+#entropyBar,#entropyBar_v6{height:8px;background:#1e293b;border-radius:4px;overflow:hidden;margin:4px 0}
+#entropyFill,#entropyFill_v6{height:100%;background:linear-gradient(90deg,#10b981,#fbbf24,#f87171);transition:width .15s}
+</style>
+</head>
+<body>
+<nav>
+  <a href="/"><i>♟</i> 对弈</a>
+  <a href="/game9"><i>🎯</i> 9×9对弈</a>
+  <a href="/eval"><i>⚔️</i> 棋力测评</a>
+  <a href="/study"><i>🔬</i> 摆谱研究</a>
+  <a href="/dashboard"><i>📊</i> 训练监控</a>
+  <a href="/network"><i>🧠</i> 网络前向</a>
+  <a href="/mcts"><i>🔍</i> MCTS搜索</a>
+  <a href="/evolution" class="active"><i>🧬</i> 开局演化</a>
+  <a href="/replay"><i>🗂</i> 自对弈数据</a>
+<a href="/quiz"><i>📝</i> 出题</a>
+</nav>
+<h1>🧬 权重开局分布演化</h1>
+<div style="color:#94a3b8;font-size:12px;margin:6px 0">
+  每个权重对<b>空盘</b>的 black 第一手 policy 分布 (纯网络, 无 MCTS)。权重按 it 数值序播放 (非字典序)。
+  熵 = 分布均匀度: <b>5.42 = 完全均匀(没学会), 越小 = 越聚焦</b> · 胜率 = 空盘 value 判黑先手优势。
+</div>
+
+<!-- ═══════ 单面板：版本可选 + 跟随训练实时长代 ═══════ -->
+<div class="sec" style="border-color:#7c3aed">
+  <div class="sec-title" id="secTitle">🧬 开局分布演化</div>
+  <div class="ctrl">
+    <label style="font-size:12px;color:#94a3b8">版本
+      <select id="verSel" onchange="onVerChange()"><option value="">加载中…</option></select>
+    </label>
+    <button id="btnPlay" class="primary" onclick="togglePlay()">▶ 自动播放</button>
+    <label style="font-size:12px;color:#94a3b8">间隔
+      <select id="speed" onchange="updateSpeed()">
+        <option value="300">0.3s</option>
+        <option value="700" selected>0.7s</option>
+        <option value="1500">1.5s</option>
+      </select>
+    </label>
+    <label style="font-size:12px;color:#94a3b8;user-select:none" title="开启后训练产出新一代会自动跳到最新">
+      <input type="checkbox" id="follow" checked style="vertical-align:-2px"> 跟随最新代
+    </label>
+    <button id="btnSync" onclick="refreshNow(true)">🔄 抓新代</button>
+    <span id="idxLabel" style="font-size:14px;color:#7dd3fc;min-width:90px;text-align:center">it—</span>
+    <input type="range" id="slider" min="0" max="1" value="0" oninput="onSlider()">
+    <span id="totalLabel" style="font-size:12px;color:#64748b;white-space:nowrap">加载中…</span>
+  </div>
+  <div id="status" style="font-size:12px;color:#94a3b8">⏳ 正在计算…</div>
+  <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;margin-top:10px">
+    <canvas id="boardCanvas" width="420" height="420" style="border:1px solid #334155;border-radius:6px"></canvas>
+    <div style="flex:1;min-width:260px">
+      <div class="card" style="margin-bottom:10px">
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px">📈 黑方胜率 (空盘 value)</div>
+        <div style="font-size:24px;color:#34d399" id="winrateVal">—</div>
+        <div style="font-size:11px;color:#64748b" id="winrateNote"></div>
+      </div>
+      <div class="card" style="margin-bottom:10px">
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:4px">🎲 分布均匀度 (熵)</div>
+        <div style="font-size:24px;color:#fbbf24" id="entropyVal">—</div>
+        <div id="entropyBar"><div id="entropyFill" style="width:0%"></div></div>
+        <div style="font-size:11px;color:#64748b" id="entropyNote"></div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;color:#94a3b8;margin-bottom:6px">🎯 Top 落点 (按概率)</div>
+        <div id="topList" style="font-size:13px;color:#e2e8f0"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const LETTERS = 'ABCDEFGHIJKLMNO';
+const POLL_MS = 20000;
+// 单面板状态：版本可切，代列表跟训练实时增长
+const ST = { ver: null, items: [], idx: 0, timer: null, bs: 15, busy: false, loaded: false };
+
+// ── 热力图 (含坐标, 标在格子中心) ──
+function hotColorRGB(t) {
+  t = Math.max(0, Math.min(1, t));
+  const r = t < .5 ? 15 : Math.round(255 * (t - .5) * 2);
+  const g = t < .5 ? Math.round(140 * t * 2) : Math.round(255 - 100 * (t - .5) * 2);
+  const b = t < .5 ? Math.round(180 - 100 * t * 2) : 40;
+  return [r, g, b];
+}
+function drawHeatCoord(cv, data, markTop, N) {
+  const ctx = cv.getContext('2d');
+  const W = cv.width;
+  N = N || 15;
+  const pad = 26, cell = (W - pad * 2) / (N - 1);
+  ctx.clearRect(0, 0, W, W);
+  let mn = Infinity, mx = -Infinity;
+  data.forEach(v => { if (v > mx) mx = v; if (v < mn) mn = v; });
+  const range = mx - mn || 1;
+  const img = ctx.createImageData(W, W);
+  const buf = img.data;
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      const col = hotColorRGB((data[r * N + c] - mn) / range);
+      const x0 = Math.round(pad + c * cell), y0 = Math.round(pad + r * cell);
+      const x1 = Math.round(pad + (c + 1) * cell), y1 = Math.round(pad + (r + 1) * cell);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const i = (y * W + x) * 4;
+          buf[i] = col[0]; buf[i + 1] = col[1]; buf[i + 2] = col[2]; buf[i + 3] = 255;
+        }
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  ctx.strokeStyle = '#334155'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= N - 1; i++) {
+    const p = pad + i * cell;
+    ctx.beginPath(); ctx.moveTo(pad, p); ctx.lineTo(pad + (N - 1) * cell, p); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p, pad); ctx.lineTo(p, pad + (N - 1) * cell); ctx.stroke();
+  }
+  ctx.fillStyle = '#c8b090'; ctx.font = Math.max(10, Math.round(W * 0.03)) + 'px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < N; i++) {
+    const p = pad + i * cell + cell / 2;
+    ctx.fillText(LETTERS[i], p, pad - 12); ctx.fillText(LETTERS[i], p, W - pad + 12);
+    ctx.fillText(N - i, pad - 12, p); ctx.fillText(N - i, W - pad + 12, p);
+  }
+  if (markTop) markTop.forEach(t => {
+    const x = pad + t.c * cell + cell / 2, y = pad + t.r * cell + cell / 2;
+    ctx.beginPath(); ctx.arc(x, y, cell * 0.44, 0, Math.PI * 2);
+    ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 2; ctx.stroke();
+  });
+}
+
+// ── 渲染（rAF 合并高频拖动）──
+function scheduleRender() {
+  if (ST.raf) return;
+  ST.raf = requestAnimationFrame(() => { ST.raf = null; render(); });
+}
+function render() {
+  const it = ST.items[ST.idx];
+  if (!it) return;
+  const $ = id => document.getElementById(id);
+  const N = ST.bs;
+  $('idxLabel').textContent = 'it' + it.it;
+  $('slider').value = ST.idx;
+  drawHeatCoord($('boardCanvas'), it.dist, it.top.slice(0, 1), N);
+  $('winrateVal').textContent = it.winrate + '%';
+  $('winrateVal').style.color = it.winrate >= 50 ? '#34d399' : '#f87171';
+  $('winrateNote').textContent =
+    `value=${it.value >= 0 ? '+' : ''}${it.value} (黑视角, 空盘先手)` +
+    (it.winrate >= 55 ? ' · 黑明显占优' : it.winrate >= 51 ? ' · 黑略优'
+      : it.winrate <= 45 ? ' · 黑劣势⚠️' : ' · 接近均衡');
+  const MAX = Math.log(N * N);
+  $('entropyVal').textContent = it.entropy;
+  $('entropyFill').style.width = Math.min(100, Math.round(100 * (1 - it.entropy / MAX))) + '%';
+  $('entropyNote').textContent =
+    it.entropy > MAX * 0.95 ? '近均匀: policy 还没学会开局' :
+    it.entropy > MAX * 0.7 ? '轻度聚焦: 开始有偏好' : '聚焦: 开局已有明确要点';
+  $('topList').innerHTML = it.top.map((t, i) =>
+    `<div style="margin:3px 0"><span class="tag ${i === 0 ? 'best' : ''}">${LETTERS[t.c]}${N - t.r}</span> ` +
+    `<span>${t.pct}%</span></div>`).join('');
+}
+
+function onSlider() {
+  stopPlay();
+  ST.idx = parseInt(document.getElementById('slider').value);
+  scheduleRender();
+}
+function togglePlay() { ST.timer ? stopPlay() : startPlay(); }
+function startPlay() {
+  const btn = document.getElementById('btnPlay');
+  btn.textContent = '⏸ 暂停';
+  btn.style.background = '#db2777';
+  ST.timer = setInterval(() => {
+    ST.idx = (ST.idx + 1) % ST.items.length;
+    scheduleRender();
+  }, parseInt(document.getElementById('speed').value));
+}
+function stopPlay() {
+  if (ST.timer) { clearInterval(ST.timer); ST.timer = null; }
+  const btn = document.getElementById('btnPlay');
+  btn.textContent = '▶ 自动播放';
+  btn.style.background = '';
+}
+function updateSpeed() { if (ST.timer) { stopPlay(); startPlay(); } }
+
+// ── 拉数据：后端按代增量缓存，新代只算新增的几条 ──
+async function refreshNow(force) {
+  if (ST.busy || !ST.ver) return;
+  ST.busy = true;
+  const $ = id => document.getElementById(id);
+  const sync = $('btnSync');
+  if (force && ST.loaded) { sync.textContent = '⏳ 同步中'; sync.disabled = true; }
+  try {
+    const r = await fetch('/api/opening_dist', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ version: ST.ver })
+    }).then(d => d.json());
+    if (!r.ok) { $('status').textContent = '❌ ' + (r.error || '加载失败'); return; }
+
+    const grew = r.items.length > ST.items.length;
+    const first = !ST.loaded;
+    ST.items = r.items;
+    ST.bs = (ST.ver === 'v16') ? 9 : 15;
+    $('slider').max = Math.max(0, ST.items.length - 1);
+    const n = ST.items.length, last = ST.items[n - 1].it;
+    $('totalLabel').textContent = `/ ${n} 个权重 (it${ST.items[0].it} ~ it${last})`;
+    $('secTitle').textContent = `🧬 开局分布演化 — ${ST.ver}（共 ${n} 代，最新 it${last}）`;
+
+    const follow = $('follow').checked;
+    if (first) ST.idx = follow ? n - 1 : 0;
+    else if (follow && grew) ST.idx = n - 1;          // 有新代就跳到最新
+    else ST.idx = Math.min(ST.idx, n - 1);
+
+    $('status').textContent =
+      (r.computed ? `✅ 新算 ${r.computed} 代` : '✅ 全部走缓存') +
+      ` · 共 ${n} 代 (it${ST.items[0].it}~it${last})` +
+      (r.skipped && r.skipped.length ? ` · ⚠️ 跳过 ${r.skipped.length} 个: ${r.skipped.map(s => 'it' + s.it).join(',')}` : '') +
+      (grew && !first ? ' · 🆕 有新代' : '');
+    ST.loaded = true;
+    render();
+  } catch (e) {
+    $('status').textContent = '❌ 请求失败: ' + e;
+  } finally {
+    ST.busy = false;
+    if (sync) { sync.textContent = '🔄 抓新代'; sync.disabled = false; }
+  }
+}
+
+async function loadVersions() {
+  const sel = document.getElementById('verSel');
+  try {
+    const r = await fetch('/api/weights', { cache: 'no-store' }).then(d => d.json());
+    const vers = r.versions || [];
+    if (!vers.length) { sel.innerHTML = '<option value="">无权重</option>'; return; }
+    sel.innerHTML = vers.map(v =>
+      `<option value="${v.version}">${v.version}（${v.n} 个权重）</option>`).join('');
+    const pref = r.active && vers.some(v => v.version === r.active) ? r.active : vers[0].version;
+    sel.value = pref;
+    ST.ver = pref;
+    await refreshNow(false);
+  } catch (e) {
+    document.getElementById('status').textContent = '❌ 版本列表加载失败: ' + e;
+  }
+}
+async function onVerChange() {
+  stopPlay();
+  ST.ver = document.getElementById('verSel').value;
+  ST.items = []; ST.loaded = false; ST.idx = 0;
+  document.getElementById('topList').innerHTML = '';
+  await refreshNow(false);
+}
+
+loadVersions();
+// 训练每 ~17 分钟出一代：闲着的时候顺手拉一次，代列表自己长
+setInterval(() => {
+  if (document.visibilityState === 'visible' && ST.loaded && !ST.busy) refreshNow(false);
+}, POLL_MS);
+</script>
+</body>
+</html>

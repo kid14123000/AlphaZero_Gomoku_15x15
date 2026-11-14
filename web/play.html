@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>对弈 · 15×15 五子棋</title>
+<link rel="stylesheet" href="/static/gomoku.css">
+<script src="/static/chart.min.js"></script>
+<script src="/static/gomoku.js"></script>
+</head>
+<body>
+<h1>♟ 对弈 <small>人机 / AI 自战 · 落子即显示网络价值与搜索依据</small></h1>
+<div class="sub">点棋盘交叉点落子；AI 自动应手。走完可以把局面存下来，去「MCTS 搜索」「网络前向」拆解。</div>
+
+<div class="wrap">
+  <div class="col-main">
+    <div class="board-wrap">
+      <canvas id="board" class="board"></canvas>
+      <div class="thinking" id="thinking"><div class="spinner"></div><span>AI 思考中…</span></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">📈 胜率走势 <span class="t2">每步后网络 value，黑方视角</span></div>
+      <div style="position:relative;height:150px"><canvas id="winChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="col-side">
+    <div class="status" id="status">点击「开始对局」</div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">对局设置</div>
+      <div class="ctl">
+        <label>⚫ 黑</label>
+        <select id="blackType"><option value="human">人类</option><option value="ai" selected>AI</option></select>
+        <select id="blackWeight" style="flex:1"><option>加载中…</option></select>
+      </div>
+      <div class="ctl">
+        <label>⚪ 白</label>
+        <select id="whiteType"><option value="human" selected>人类</option><option value="ai">AI</option></select>
+        <select id="whiteWeight" style="flex:1"><option>加载中…</option></select>
+      </div>
+      <div class="ctl">
+        <label>🔍 模拟</label>
+        <input type="range" id="nplayout" min="1" max="800" step="1" value="100" style="flex:1">
+        <b id="nplayoutV" style="min-width:34px;text-align:right">100</b>
+      </div>
+      <div class="ctl">
+        <label>🌡 温度</label>
+        <input type="range" id="temp" min="0.05" max="2" step="0.05" value="0.3" style="flex:1">
+        <b id="tempV" style="min-width:34px;text-align:right">0.30</b>
+      </div>
+      <div class="ctl">
+        <label>🎯 手顺</label>
+        <input type="text" id="firstMoves" placeholder="如 7,7 8,8（可留空）" style="flex:1">
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <button class="primary" onclick="startGame()">🎮 开始对局</button>
+        <button class="danger" onclick="stopGame()">⏹ 终止</button>
+      </div>
+      <div class="hint" style="margin:8px 0 0">模拟次数 = 每手 MCTS 次数，越大越强越慢；温度越小越贪心（0.05≈总是选最优）。</div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">🧠 AI 最近一步 <span class="t2">选点概率 Top3（已按温度 τ 调整）</span></div>
+      <div id="aiInfo"><div class="empty">AI 还没走过</div></div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">🎨 价值热力图 <span class="t2">该点落子后对走子方的期望</span></div>
+      <div class="ctl" style="margin-bottom:0">
+        <label style="min-width:auto"><input type="checkbox" id="showHeat" onchange="draw()"> 显示</label>
+        <span class="hint" style="margin:0">红=对我方好，蓝=差</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">落子记录 <span class="t2" id="moveCount"></span></div>
+      <div class="history" id="history"><span class="hint">对局开始后显示</span></div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">💾 局面存档 <span class="t2">MCTS / 网络前向页可直接读</span></div>
+      <div class="ctl">
+        <input type="text" id="posName" placeholder="名称，如 白飞_22手" style="flex:1">
+        <button onclick="savePos()">💾 保存</button>
+      </div>
+      <div class="ctl" style="margin-bottom:0">
+        <select id="posList" onmousedown="this.value=''" onchange="loadPos()" style="flex:1">
+          <option value="">— 载入已存局面 —</option>
+        </select>
+        <button class="tiny danger" onclick="delPos()">🗑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+renderNav('/play');
+
+let view = null;
+let state = null;
+let busy = false;
+let winChart = null;
+let autoTimer = null;
+
+init();
+
+async function init() {
+  await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
+  view = new BoardView($('board'), {
+    onClick: (r, c) => humanMove(r, c),
+    showNumbers: true,
+  });
+  ['nplayout', 'temp'].forEach(id => {
+    $(id).addEventListener('input', e => {
+      $(id + 'V').textContent = id === 'temp'
+        ? Number(e.target.value).toFixed(2) : e.target.value;
+    });
+  });
+  try {
+    await fillModels('blackWeight');
+    $('blackWeight').value = $('blackWeight').options[0].value;
+    await fillModels('whiteWeight');
+    $('whiteWeight').value = $('whiteWeight').options[0].value;
+  } catch (e) { showStatus(`<span class="warn">权重加载失败：${e.message}</span>`); }
+  await refreshPositions();
+  await pullState();
+}
+
+function parseFirstMoves() {
+  const raw = $('firstMoves').value.trim();
+  if (!raw) return [];
+  const out = [];
+  raw.split(/[\s;]+/).forEach(tok => {
+    const m = tok.split(/[,，]/).map(x => parseInt(x, 10));
+    if (m.length === 2 && !isNaN(m[0]) && !isNaN(m[1])) out.push({r: m[0], c: m[1]});
+  });
+  return out;
+}
+
+async function startGame() {
+  const cfg = {
+    black_type: $('blackType').value,
+    white_type: $('whiteType').value,
+    black_weight: $('blackWeight').value,
+    white_weight: $('whiteWeight').value,
+    n_playout: +$('nplayout').value,
+    temp: +$('temp').value,
+    c_puct: 5,
+    first_moves: parseFirstMoves(),
+  };
+  if (cfg.black_type === 'ai' && cfg.white_type === 'ai' && cfg.n_playout > 300) {
+    if (!confirm(`AI 自战 + ${cfg.n_playout} 次模拟会比较慢，继续？`)) return;
+  }
+  think(true, 'AI 思考中…');
+  try {
+    const d = await api('/api/game/new', cfg);
+    applyState(d.state);
+    maybeAutoStep();
+  } catch (e) {
+    showStatus(`<span class="warn">开局失败：${e.message}</span>`);
+  } finally { think(false); }
+}
+
+async function humanMove(r, c) {
+  if (!state || state.over || busy) return;
+  if (state.cur_is_ai) { showStatus('现在轮到 AI，请稍等…'); return; }
+  busy = true;
+  think(true, 'AI 思考中…');
+  try {
+    const d = await api('/api/game/move', {row: r, col: c});
+    if (!d.ok) showStatus(`<span class="warn">${d.error}</span>`);
+    applyState(d.state);
+    maybeAutoStep();
+  } catch (e) {
+    showStatus(`<span class="warn">落子失败：${e.message}</span>`);
+  } finally { busy = false; think(false); }
+}
+
+function maybeAutoStep() {
+  if (!state || state.over) return;
+  if (!state.cur_is_ai) return;
+  clearTimeout(autoTimer);
+  autoTimer = setTimeout(async () => {
+    think(true, 'AI 思考中…');
+    try {
+      const d = await api('/api/game/ai', {});
+      applyState(d.state);
+      think(false);
+      maybeAutoStep();
+    } catch (e) {
+      think(false);
+      showStatus(`<span class="warn">AI 走子失败：${e.message}</span>`);
+    }
+  }, 180);
+}
+
+function stopGame() {
+  clearTimeout(autoTimer);
+  state = null;
+  view.setState({stones: [], lastMove: null, heat: null, marks: []});
+  $('aiInfo').innerHTML = '<div class="empty">AI 还没走过</div>';
+  $('history').innerHTML = '<span class="hint">对局结束</span>';
+  if (winChart) { winChart.data.labels = []; winChart.data.datasets.forEach(d => d.data = []); winChart.update('none'); }
+  showStatus('已终止');
+}
+
+async function pullState() {
+  try { const d = await api('/api/game/state'); if (d.state) applyState(d.state); } catch (e) {}
+}
+
+function applyState(s) {
+  if (!s) return;
+  state = s;
+  draw();
+  updateStatus();
+  updateHistory();
+  updateAiInfo();
+  updateChart();
+}
+
+function draw() {
+  if (!state) { view.setState({stones: [], lastMove: null}); return; }
+  const stones = state.stones.map(x => ({r: x.r, c: x.c, p: x.p, n: x.n}));
+  const last = stones.length ? stones[stones.length - 1] : null;
+  const heat = $('showHeat').checked ? state.value_map : null;
+  view.setState({
+    stones,
+    lastMove: last ? {r: last.r, c: last.c} : null,
+    heat,
+    heatMode: 'value',
+    heatAlpha: .5,
+    marks: [],
+  });
+}
+
+function updateStatus() {
+  const s = state;
+  const side = s.current === 1 ? '<span class="black">⚫ 黑</span>' : '<span class="white">⚪ 白</span>';
+  if (s.over) {
+    const w = s.winner === 1 ? '<span class="black">黑胜</span>'
+      : s.winner === 2 ? '<span class="white">白胜</span>' : '和棋';
+    showStatus(`对局结束 — ${w}（共 ${s.move_count} 手）`);
+    return;
+  }
+  const who = s.cur_is_ai ? 'AI' : '你';
+  showStatus(`第 <b>${s.move_count + 1}</b> 手 · 轮到 ${side}（${who}）· 可选 ${s.availables} 点`);
+}
+
+function updateHistory() {
+  const s = state;
+  $('moveCount').textContent = s.move_count ? `${s.move_count} 手` : '';
+  if (!s.moves.length) { $('history').innerHTML = '<span class="hint">还没有落子</span>'; return; }
+  const parts = s.moves.map((m, i) => {
+    const cls = i % 2 === 0 ? 'b' : 'w';
+    const dot = i % 2 === 0 ? '⚫' : '⚪';
+    return `<span class="${cls}">${dot}${m.r},${m.c}</span>`;
+  });
+  $('history').innerHTML = parts.join(' · ');
+  $('history').scrollTop = $('history').scrollHeight;
+}
+
+function updateAiInfo() {
+  const ai = state && state.last_ai;
+  if (!ai) { $('aiInfo').innerHTML = '<div class="empty">AI 还没走过</div>'; return; }
+  const rows = ai.top.map((t, i) => `
+    <div class="kv"><span>${i === 0 ? '★' : '·'} ${t.r},${t.c}</span>
+    <span>${t.prob.toFixed(1)}%</span></div>`).join('');
+  $('aiInfo').innerHTML = `
+    <div class="kv"><span>AI 落子</span><span>${ai.r},${ai.c}（${ai.side === 1 ? '⚫黑' : '⚪白'}）</span></div>
+    <div class="kv"><span>落子前 value</span><span>${fx(ai.value_before, 3)}</span></div>
+    <div class="kv"><span>模拟次数</span><span>${ai.n_playout}</span></div>
+    <div style="margin:7px 0 3px;font-size:11px;color:#64748b">访问分布 Top3</div>${rows}`;
+}
+
+function updateChart() {
+  if (!state) return;
+  const hist = state.win_history || [];
+  const labels = hist.map(h => h.n);
+  const data = hist.map(h => h.black_pct);
+  if (!winChart) {
+    winChart = new Chart($('winChart').getContext('2d'), {
+      type: 'line',
+      data: {labels, datasets: [{
+        label: '黑方胜率 %', data, borderColor: '#60a5fa', backgroundColor: 'rgba(96,165,250,.12)',
+        borderWidth: 2, pointRadius: 0, tension: .25, fill: true,
+      }]},
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {legend: {labels: {color: '#94a3b8', boxWidth: 10, font: {size: 10}}}},
+        scales: {
+          x: {type: 'linear', min: 0, ticks: {color: '#64748b', font: {size: 9},
+              stepSize: 1, precision: 0, callback: v => Number.isInteger(v) ? v : ''},
+              grid: {color: '#24324a'},
+              title: {display: true, text: '手数', color: '#475569', font: {size: 9}}},
+          y: {ticks: {color: '#64748b', font: {size: 9}, callback: v => v + '%'},
+              grid: {color: '#24324a'}, min: 0, max: 100},
+        },
+      },
+    });
+  }
+  winChart.data.datasets[0].data = hist.map(h => ({x: h.n, y: h.black_pct}));
+  // 胜率是百分比，纵轴不能跑到 -20%：按数据范围收紧，再夹到 [0,100]
+  if (data.length) {
+    const lo = Math.min(...data), hi = Math.max(...data);
+    winChart.options.scales.y.min = Math.max(0, Math.floor(lo - 8));
+    winChart.options.scales.y.max = Math.min(100, Math.ceil(hi + 8));
+  }
+  winChart.update('none');
+}
+
+function think(on, msg) {
+  const el = $('thinking');
+  el.classList.toggle('on', !!on);
+  if (msg) el.querySelector('span').textContent = msg;
+}
+
+function showStatus(html) { $('status').innerHTML = html; }
+
+/* ── 局面存档 ── */
+async function refreshPositions() {
+  try {
+    const d = await api('/api/positions/list');
+    const sel = $('posList');
+    sel.innerHTML = '<option value="">— 载入已存局面 —</option>';
+    d.positions.forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.name;
+      o.textContent = `${p.name}（${p.n} 手）`;
+      sel.appendChild(o);
+    });
+  } catch (e) {}
+}
+
+async function savePos() {
+  if (!state || !state.moves.length) { alert('还没有落子，没东西可存'); return; }
+  let name = $('posName').value.trim();
+  if (!name) {
+    name = `对局_${state.move_count}手_${new Date().toLocaleTimeString('zh-CN', {hour12: false})}`;
+  }
+  try {
+    await api('/api/positions/save', {name, stones: state.moves, note: `对局 ${state.move_count} 手`});
+    await refreshPositions();
+    showStatus(`已存为「${name}」— 可去 MCTS / 网络前向页载入`);
+  } catch (e) { alert('保存失败：' + e.message); }
+}
+
+async function loadPos() {
+  const name = $('posList').value;
+  if (!name) return;
+  try {
+    const d = await api('/api/positions/load', {name});
+    const stones = d.position.stones;
+    const fm = stones.map(s => `${s.r},${s.c}`).join(' ');
+    $('firstMoves').value = fm.split(' ').slice(0, 2).join(' ');
+    showStatus(`已载入「${name}」（${stones.length} 手）。` +
+      (stones.length > 2 ? ' 手顺只支持前 2 手，其余请用分析页查看。' : ''));
+  } catch (e) { alert('载入失败：' + e.message); }
+}
+
+async function delPos() {
+  const name = $('posList').value;
+  if (!name) return;
+  if (!confirm(`删除局面「${name}」？`)) return;
+  try { await api('/api/positions/delete', {name}); await refreshPositions(); } catch (e) {}
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'h' && e.target.tagName !== 'INPUT') {
+    $('showHeat').checked = !$('showHeat').checked;
+    draw();
+  }
+});
+</script>
+</body>
+</html>
