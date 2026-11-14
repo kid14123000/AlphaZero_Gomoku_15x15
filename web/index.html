@@ -219,26 +219,62 @@ const COL = {blue:'#60a5fa', sky:'#38bdf8', green:'#4ade80', orange:'#fbbf24',
              grid:'#24324a', tick:'#64748b', leg:'#94a3b8'};
 
 /* ── x 轴显示窗口 ──
- * 默认从第 1000 局开始画，1~1000 局不显示（早期是随机棋，会把纵轴压扁）。
- * 想临时改窗口：?from=2000 ；想看全部：?from=0
+ * 默认起点 DEFAULT_FROM（2026-11-14 用户要求：窗口太宽看不出趋势）。
+ * 三种窗口来源（优先级从高到低）：
+ *   ?from=13000   显式起点
+ *   ?last=1000    只看最近 N 局（跟着数据滑动）
+ *   默认          DEFAULT_FROM 起，但不会早于数据里最小的那一局
+ *                 （重启训练会换新 logs/metrics.jsonl，batch 从 batch_offset+1 起，
+ *                  DEFAULT_FROM 之前根本没数据 → 硬设起点等于左边 2/3 全空白）
  *
- * ⚠️ 新开的训练跑（总代数 < 1000）必须自动退回 0：否则 x.min=1000 把所有点
- *    都裁掉，11 张图全是空格子，看着跟服务挂了一样（v2 从零跑时踩过）。
+ * ⚠️ 数据还没到默认起点时的处理（v2 从零跑时踩过：x.min 写死 1000 让 11 张图
+ *    全是空格子，看着跟服务挂了一样）：先显示「最近 RECENT_WIN 局」，
+ *    等数据确实越过默认起点后，下一次 tick 自动切到默认窗口。
  */
+const DEFAULT_FROM = 14000;      // ← 默认窗口起点（想改常年窗口只改这一行）
+const RECENT_WIN   = 1000;       // 数据没到起点时，暂显最近多少局
 const FROM_RAW = new URLSearchParams(location.search).get('from');
+const LAST_RAW = new URLSearchParams(location.search).get('last');
 const FROM_EXPLICIT = FROM_RAW !== null;
-let XMIN = (() => {
-  if (!FROM_EXPLICIT) return 1000;
-  const v = parseInt(FROM_RAW, 10);
-  return isNaN(v) ? 1000 : Math.max(0, v);
+const LAST_N = (() => {
+  if (LAST_RAW === null) return 0;
+  const v = parseInt(LAST_RAW, 10);
+  return isNaN(v) ? 0 : Math.max(50, v);
 })();
-/** 数据还没到默认窗口起点时自动放开（用户显式 ?from= 时不干预） */
-function autoWindow(maxX){
-  if (FROM_EXPLICIT || !maxX || XMIN === 0) return false;
-  if (maxX >= XMIN) return false;
-  XMIN = 0;
-  BASE_OPTS.scales.x.min = 0;
-  BASE_OPTS.scales.x.title.text = '代数（= 自对弈局数）';
+let XMIN_MODE = FROM_EXPLICIT ? 'explicit' : (LAST_N ? 'last' : 'auto');
+let XMIN = (() => {
+  if (XMIN_MODE === 'explicit') {
+    const v = parseInt(FROM_RAW, 10);
+    return isNaN(v) ? DEFAULT_FROM : Math.max(0, v);
+  }
+  return DEFAULT_FROM;                     // last / auto 都由 autoWindow 按数据定
+})();
+/** 把当前窗口刷到 BASE_OPTS（影响以后新建的图）和所有已存在的图表 */
+function syncXAxis(){
+  BASE_OPTS.scales.x.min = XMIN;
+  BASE_OPTS.scales.x.title.text = XMIN
+    ? `代数（= 自对弈局数，只显示 ≥ ${XMIN}）` : '代数（= 自对弈局数）';
+  Object.values(charts).forEach(ch => {
+    const xs = ch && ch.options && ch.options.scales && ch.options.scales.x;
+    if (!xs) return;
+    xs.min = XMIN;
+    if (xs.title) xs.title.text = BASE_OPTS.scales.x.title.text;
+  });
+}
+/** 按数据范围决定窗口（用户显式 ?from= 时不干预） */
+function autoWindow(maxX, minX){
+  if (!maxX || !XMIN_MODE || XMIN_MODE === 'explicit') return false;
+  let want;
+  if (XMIN_MODE === 'last') {
+    want = Math.max(0, maxX - LAST_N);               // 滚动窗口
+  } else if (maxX < DEFAULT_FROM) {
+    want = Math.max(0, maxX - RECENT_WIN);           // 数据没到起点 → 先看最近 RECENT_WIN 局
+  } else {
+    want = Math.max(DEFAULT_FROM, minX || 0);        // 至少 DEFAULT_FROM，但不早于第一局（别留大空白）
+  }
+  if (want === XMIN) return false;
+  XMIN = want;
+  syncXAxis();
   return true;
 }
 
@@ -675,15 +711,31 @@ async function tick(manual){
       ? `纯 MCTS 评估：<b style="color:#f87171">已停用</b>（历史最后一次用到 ${oppPo} playouts）· 棋力请看 Rapfi`
       : `评估对手：纯 MCTS ${oppPo} playouts`;
     const xw = document.getElementById('xwin');
-    const maxX = d.games && d.games.length ? d.games[d.games.length - 1][0] : 0;
-    autoWindow(maxX);          // 新跑没到 1000 局就自动放开窗口，别让图留空
-    xw.innerHTML = XMIN
-      ? `图表 x 轴：第 <b style="color:#cbd5e1">${XMIN}</b> 局起（1–${XMIN - 1} 局已隐藏）` +
-        (maxX && maxX < XMIN
-          ? ` <span style="color:#f87171">· 目前只跑到 ${maxX} 局，所以曲线还是空的</span>`
-          : '') +
-        ` · <a href="?from=0" style="color:#7dd3fc">看全部</a>`
-      : `图表 x 轴：<b style="color:#cbd5e1">全部 1–${maxX}</b> 局 · <a href="/dashboard" style="color:#7dd3fc">只看 1000 以后</a>`;
+    const gs = (d.games && d.games.length) ? d.games : [];
+    const maxX = gs.length ? gs[gs.length - 1][0] : 0;
+    const minX = gs.length ? gs[0][0] : 0;
+    autoWindow(maxX, minX);    // 数据没到默认起点就按最近 RECENT_WIN 局画，别让图留空
+    const hidden = Math.max(0, Math.min(maxX, XMIN) - minX);   // 实际被裁掉的本轮局数
+    const fromLnk = XMIN_MODE === 'explicit'
+      ? `<a href="/dashboard" style="color:#7dd3fc">恢复默认窗口</a>`
+      : `<a href="?from=0" style="color:#7dd3fc">看全部 ${gs.length} 局</a>`;
+    const warn = (maxX && maxX < XMIN)
+      ? ` <span style="color:#f87171">· 目前只跑到 ${maxX} 局，所以曲线还是空的</span>`
+      : '';
+    const restartHint = (XMIN_MODE !== 'explicit' && minX && minX > DEFAULT_FROM)
+      ? ` <span style="color:#94a3b8">· 本轮从 ${minX} 局起（重启换了新日志），${DEFAULT_FROM} 之前没有数据，x 轴贴住第一局</span>`
+      : '';
+    if (XMIN_MODE === 'last') {
+      xw.innerHTML = `图表 x 轴：<b style="color:#cbd5e1">最近 ${LAST_N} 局</b>（${XMIN}–${maxX}）` +
+        warn + ` · ${fromLnk}`;
+    } else if (XMIN) {
+      xw.innerHTML = `图表 x 轴：第 <b style="color:#cbd5e1">${XMIN}</b> 局起` +
+        (hidden ? `（已隐藏 ${hidden} 局）` : `（本轮 ${minX}–${maxX} 局全部显示）`) +
+        warn + restartHint + ` · ${fromLnk}`;
+    } else {
+      xw.innerHTML = `图表 x 轴：<b style="color:#cbd5e1">全部 ${minX}–${maxX}</b> 局 · ` +
+        `<a href="/dashboard" style="color:#7dd3fc">只看 ${DEFAULT_FROM} 以后</a>`;
+    }
     renderKpis(d);
     render(d);
     // 战斗指标走单独的接口（读 games.jsonl，不是 metrics.jsonl），
