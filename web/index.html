@@ -18,6 +18,19 @@ h1 small{font-size:.75rem;color:#64748b;font-weight:400}
 .badge .d{width:7px;height:7px;border-radius:50%;background:currentColor}
 .badge.run .d{animation:pulse 1.6s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+/* 分层采样档位徽章：纯前端由白胜率推演，虚线边框表示「非读配置」 */
+.tierline{margin-top:8px}
+.badge.tier{font-size:.66rem;padding:2px 8px;border:1px dashed currentColor;
+  opacity:.92;cursor:help;font-weight:600;white-space:nowrap}
+.badge.tier-collapse{background:#3b1414;color:#f87171}
+.badge.tier-mid{background:#0c2a3f;color:#7dd3fc}
+.badge.tier-healthy{background:#3b2a08;color:#fbbf24;animation:tierpulse 2s infinite}
+@keyframes tierpulse{0%,100%{opacity:.7}50%{opacity:1}}
+/* 顶档告警横幅：只在白胜率 >35% 时出现 */
+.tierbanner{margin:0 0 12px;padding:9px 14px;border-radius:8px;font-size:.78rem;
+  background:rgba(251,191,36,.10);border:1px solid rgba(251,191,36,.45);
+  color:#fcd34d;line-height:1.6}
+.tierbanner b{color:#fde68a}
 button{background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:6px 16px;font-size:13px;cursor:pointer}
 button:hover{background:#8b5cf6}
 button:disabled{opacity:.6;cursor:default}
@@ -82,6 +95,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
   <span style="font-size:.72rem;color:#475569" id="upd">—</span>
   <span style="font-size:.72rem;color:#334155">· 每 1 秒自动刷新</span>
 </div>
+<div id="tierbanner" class="tierbanner" style="display:none"></div>
 
 <div class="row kpirow">
   <div class="card">
@@ -95,6 +109,7 @@ code{background:#1e293b;padding:1px 6px;border-radius:4px;color:#7dd3fc}
     <div class="big"><span class="wr-black" id="k-bwr">—</span><span class="big-unit">/</span>
       <span class="wr-white" id="k-wwr">—</span></div>
     <div class="sub" id="k-wrsub">—</div>
+    <div class="tierline"><span class="badge tier" id="k-tier" style="display:none"></span></div>
   </div>
   <div class="card">
     <div class="card-title">⚔ 战斗激烈度 <span class="t2">0-100</span></div>
@@ -339,6 +354,25 @@ function REF(label, color, pts){
           borderDash:[5,4], pointRadius:0, fill:false};
 }
 
+// ── 分层采样档位（只读监控，纯前端推演）──────────────────────────────
+// 阈值与 curriculum_ctl.py 完全一致：LO=0.20 / HI=0.35。
+// ⚠️ 这是「由近 100 局白胜率反推控制器应收档位」，不是读取 sync/class_weight.json：
+//    控制器另有 DEBOUNCE=60 局去抖，实际换档可能滞后；若控制器被停掉，此处仍会照常推演。
+const TIER_LO = 20, TIER_HI = 35;
+const TIERS = {
+  collapse: {label:'崩档', wCnt:113, bAdv:68, cls:'tier-collapse',
+    tip:'白胜率 <20%：白赢份额 22%（113 条/批），B_win 35%，黑方局面占 68%。\n用于把白方从崩塌里拉出来。'},
+  mid: {label:'恢复档', wCnt:82, bAdv:75, cls:'tier-mid',
+    tip:'白胜率 20~35%：白赢份额 16%（82 条/批），B_win 40%，黑方局面占 75%。\n重心开始从「学赢」转向「学防守」。'},
+  healthy: {label:'顶档', wCnt:51, bAdv:82, cls:'tier-healthy',
+    tip:'白胜率 >35%：控制器最高档，没有上界逻辑。\n白赢份额降至 10%（51 条/批），B_win 44%，黑方局面占 82%。\n⚠ 此档隐含「白约 18%」的假设，若白率真的超过 35%，batch 分布已偏离实际对局分布 ——\n建议评估是否停掉 curriculum_ctl.py 退回均匀采样。'}
+};
+function tierOf(wr){
+  const v = Number(wr);
+  if (!isFinite(v)) return null;
+  return v < TIER_LO ? 'collapse' : (v > TIER_HI ? 'healthy' : 'mid');
+}
+
 function render(d){
   const games = d.games || [], updates = d.updates || [], evals = d.evals || [];
 
@@ -364,7 +398,10 @@ function render(d){
   charts.wr.data.datasets = [
     LN('黑胜率', COL.blue,  C(games.map((g,i) => ({x:g[0], y:(d.black_wr_roll||[])[i]})))),
     LN('白胜率', COL.orange,C(games.map((g,i) => ({x:g[0], y:(d.white_wr_roll||[])[i]})))),
-    REF('50%（理论均衡）', COL.grey, refPts(games.map(g => g[0]), 50))
+    REF('50%（理论均衡）', COL.grey, refPts(games.map(g => g[0]), 50)),
+    // 分层采样换档线（与 curriculum_ctl.py 的 LO/HI 一致）：白胜率穿越这两条线 = 控制器改配额
+    REF('崩档线 20%', '#f87171', refPts(games.map(g => g[0]), TIER_LO)),
+    REF('顶档线 35%', COL.purple, refPts(games.map(g => g[0]), TIER_HI))
   ];
   charts.wr.update('none');
 
@@ -605,6 +642,33 @@ function renderKpis(d){
     ? `黑 <b>${m.last_black_wins}</b> · 白 <b>${m.last_white_wins}</b> · 和 <b>${m.last_ties}</b>` +
       `<br>全量 ${F(m.black_wr,1)}% / ${F(m.white_wr,1)}%`
     : `黑 <b>${m.black_wins}</b> · 白 <b>${m.white_wins}</b> · 和 <b>${m.ties}</b>`;
+
+  // 分层采样档位（只读监控）：由当前显示的白胜率推演控制器应收档位
+  const tierEl = document.getElementById('k-tier');
+  const bannerEl = document.getElementById('tierbanner');
+  const wrNow = useLast ? lw : m.white_wr;
+  const tkey = tierOf(wrNow);
+  if (tkey) {
+    const t = TIERS[tkey];
+    tierEl.className = 'badge tier ' + t.cls;
+    tierEl.textContent = '分层采样·' + t.label;
+    tierEl.title = t.tip;
+    tierEl.style.display = '';
+    if (tkey === 'healthy') {
+      bannerEl.innerHTML =
+        `⚠ <b>白胜率 ${F(wrNow, 1)}% 已越过顶档线 35%</b> —— 分层采样进顶档：` +
+        `白赢份额压到 <b>${t.wCnt} 条/批</b>（10%）、黑方局面占 <b>${t.bAdv}%</b>，` +
+        `而这一档隐含「白约 18%」的假设，batch 分布已偏离实际对局分布。<br>` +
+        `建议评估是否停掉 <code>curriculum_ctl.py</code> 退回均匀采样。` +
+        `<span style="color:#a16207">（纯只读提示，本页不写任何训练侧配置）</span>`;
+      bannerEl.style.display = '';
+    } else {
+      bannerEl.style.display = 'none';
+    }
+  } else {
+    tierEl.style.display = 'none';
+    bannerEl.style.display = 'none';
+  }
 
   document.getElementById('k-len').textContent = F(m.len_avg_last, 1);
   document.getElementById('k-lensub').innerHTML =

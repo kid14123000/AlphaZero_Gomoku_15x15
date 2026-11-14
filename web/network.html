@@ -11,20 +11,27 @@
 <h1>🧠 网络前向 <small>逐层激活 + policy/value 双头</small></h1>
 <div class="sub">摆任意局面 → 一次干净前向（不走搜索、不加噪声），看每一层把棋盘看成了什么。</div>
 
-<div class="wrap">
-  <div class="col-main">
+<div class="wrap3">
+  <!-- A 列：摆谱 + 前向设置 -->
+  <div class="colx" style="flex:0 0 380px">
     <div class="board-wrap">
       <canvas id="setup" class="board"></canvas>
       <div class="thinking" id="thinking1"><div class="spinner"></div><span>前向中…</span></div>
     </div>
-    <div class="card" style="margin-top:10px;padding:10px 12px">
+    <div class="card" style="padding:10px 12px">
       <div class="ctl" style="margin-bottom:6px">
         <span style="font-size:12px;color:#64748b">当前该走：</span>
         <b id="curColor" style="color:#93c5fd">⚫ 黑</b>
         <span class="hint" style="margin:0" id="setupInfo">空盘</span>
+        <b id="cursorInfo" style="margin-left:auto;font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums">0 / 0</b>
+      </div>
+      <div class="ctl" style="margin-bottom:6px">
+        <button class="tiny" onclick="ed.first()" title="跳到开头（空盘）">⏮ 开头</button>
+        <button class="tiny" onclick="ed.back()" title="退一手">◀ 回退</button>
+        <button class="tiny" onclick="ed.forward()" title="进一手">前进 ▶</button>
+        <button class="tiny" onclick="ed.last()" title="跳到最后一手">结局 ⏭</button>
       </div>
       <div class="ctl" style="margin-bottom:0">
-        <button class="tiny" onclick="ed.undo()">↩ 回退</button>
         <button class="tiny" onclick="ed.clear()">🗑 清空</button>
         <button class="tiny" onclick="takeGameBoard()">📋 取对弈局面</button>
         <select id="posList" class="tiny" onmousedown="this.value=''" onchange="loadPos()" style="max-width:110px">
@@ -32,27 +39,8 @@
         </select>
       </div>
     </div>
-  </div>
 
-  <div class="col-main">
-    <div class="board-wrap">
-      <canvas id="result" class="board"></canvas>
-      <div class="thinking" id="thinking2"><div class="spinner"></div><span>前向中…</span></div>
-    </div>
-    <div class="card" style="margin-top:10px;padding:10px 12px">
-      <div class="ctl" style="margin-bottom:0">
-        <label style="min-width:auto">棋盘显示</label>
-        <select id="heatMode" onchange="drawResult()">
-          <option value="policy">policy 概率</option>
-          <option value="none">不显示热力图</option>
-        </select>
-        <span class="hint" style="margin:0">金色 ★ = policy Top1</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-side">
-    <div class="card" style="margin-bottom:12px">
+    <div class="card">
       <div class="card-title">前向设置</div>
       <div class="ctl">
         <label>权重</label>
@@ -63,26 +51,47 @@
         <span class="hint" style="margin:0" id="runMeta"></span>
       </div>
     </div>
+  </div>
 
-    <div class="row" style="margin-bottom:12px">
-      <div class="card narrow" style="margin:0">
+  <!-- B 列：结果盘（缩到 460，原 564 白占半屏）+ policy Top10 -->
+  <div class="colx" style="flex:0 0 460px">
+    <div class="board-wrap">
+      <canvas id="result" class="board"></canvas>
+      <div class="thinking" id="thinking2"><div class="spinner"></div><span>前向中…</span></div>
+    </div>
+    <div class="card" style="padding:10px 12px">
+      <div class="ctl" style="margin-bottom:0">
+        <label style="min-width:auto">棋盘显示</label>
+        <select id="heatMode" onchange="drawResult()">
+          <option value="policy">policy 概率</option>
+          <option value="none">不显示热力图</option>
+        </select>
+        <span class="hint" style="margin:0">金色 ★ = policy Top1</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">policy Top10</div>
+      <div class="scroll" id="polTop" style="max-height:200px"><div class="empty">还没有数据</div></div>
+    </div>
+  </div>
+
+  <!-- C 列：关键指标 + 层统计 + 计算图 -->
+  <div class="colx" style="flex:1 1 330px">
+    <div class="row" style="margin-bottom:0">
+      <div class="card narrow" style="margin:0;min-width:130px">
         <div class="card-title">value 输出 <span class="t2">tanh</span></div>
         <div class="big" id="valRaw">—</div>
         <div class="sub" id="valSub" style="margin:5px 0 0">—</div>
       </div>
-      <div class="card narrow" style="margin:0">
+      <div class="card narrow" style="margin:0;min-width:130px">
         <div class="card-title">policy <span class="t2">softmax 熵</span></div>
         <div class="big" id="polEnt">—</div>
         <div class="sub" id="polSub" style="margin:5px 0 0">—</div>
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-title">policy Top10</div>
-      <div class="scroll" id="polTop"><div class="empty">还没有数据</div></div>
-    </div>
-
-    <div class="card" style="margin-bottom:12px">
+    <div class="card">
       <div class="card-title">层统计</div>
       <div class="scroll" id="layerTable" style="max-height:260px">
         <div class="empty">还没有数据</div>
@@ -119,13 +128,16 @@ async function init() {
   await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
   ed = new PositionEditor($('setup'), {
     size: 380,
-    onChange: (stones, cur) => {
+    onChange: (stones, cur, editor) => {
       $('curColor').innerHTML = cur === 1 ? '⚫ 黑' : '⚪ 白';
       $('curColor').style.color = cur === 1 ? '#93c5fd' : '#fcd34d';
       $('setupInfo').textContent = stones.length ? `${stones.length} 手` : '空盘';
+      const ci = $('cursorInfo');
+      if (ci && editor) ci.textContent = `${editor.cursor} / ${editor.total}`;
     },
   });
-  rview = new BoardView($('result'), {size: BOARD_PX, showNumbers: true, hover: false});
+  // 结果盘不用整块 BOARD_PX(564)；摆谱盘 + 结果盘并排就够了
+  rview = new BoardView($('result'), {size: Math.min(460, BOARD_PX), showNumbers: true, hover: false});
   try {
     await fillModels('model');
     $('model').value = $('model').options[0].value;

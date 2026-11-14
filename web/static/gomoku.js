@@ -260,10 +260,20 @@ class BoardView {
 
 /* ══════════ 摆谱编辑器 ══════════ */
 class PositionEditor {
-  /** stones: [{r,c}] 数组，**颜色按放置顺序推导**（index 偶数=黑） */
+  /** stones: [{r,c}] 数组，**颜色按放置顺序推导**（index 偶数=黑）
+   *
+   * 🚨 两个独立概念，别混：
+   *   full   —— 完整的落子序列（载入棋谱后 = 整局）
+   *   cursor —— 当前停在几手（只显示前 cursor 手）
+   * 「回退/前进/首/末」只挪 cursor，**不销毁后面的手**；只有真正落新子时
+   * 才把 cursor 之后的未来截断（标准分支编辑语义）。
+   *
+   * 旧实现把"载入棋谱"也压进 undoStack，于是按一次 回退 就弹回空盘
+   * ⇒ 用户报的「载入棋谱后回退把棋谱清空了」。现在 set() 不再动 cursor 的历史。
+   */
   constructor(canvas, opts = {}) {
-    this.stones = [];
-    this.undoStack = [];
+    this.full = [];
+    this._cursor = 0;
     this.board = new BoardView(canvas, {
       size: opts.size || 380,
       onClick: (r, c) => this.toggle(r, c),
@@ -273,33 +283,50 @@ class PositionEditor {
     this.sync();
   }
 
+  get stones() { return this.full.slice(0, this._cursor); }
+  get cursor() { return this._cursor; }
+  get total() { return this.full.length; }
+
   toggle(r, c) {
+    // 点已显示过的棋子 = 跳到该手之前（保留后面，可再前进回去）
     const i = this.stones.findIndex(s => s.r === r && s.c === c);
-    if (i >= 0) {
-      // 点已有棋子 = 退回到该手之前（后面的手全部撤销，保证交替配色自洽）
-      this.undoStack.push(this.stones.slice());
-      this.stones = this.stones.slice(0, i);
-    } else {
-      this.undoStack.push(this.stones.slice());
-      this.stones.push({r, c});
-    }
+    if (i >= 0) { this._cursor = i; this.sync(); return; }
+    // 落新子：截断 cursor 之后的未来，保证交替配色自洽
+    this.full = this.full.slice(0, this._cursor);
+    this.full.push({r, c});
+    this._cursor = this.full.length;
     this.sync();
   }
 
-  undo() {
-    if (!this.undoStack.length) return;
-    this.stones = this.undoStack.pop();
+  back() {
+    if (this._cursor <= 0) return;
+    this._cursor--;
     this.sync();
   }
+  forward() {
+    if (this._cursor >= this.full.length) return;
+    this._cursor++;
+    this.sync();
+  }
+  first() { if (this._cursor !== 0) { this._cursor = 0; this.sync(); } }
+  last()  { if (this._cursor !== this.full.length) { this._cursor = this.full.length; this.sync(); } }
+  goTo(n) {
+    const k = Math.max(0, Math.min(this.full.length, n | 0));
+    if (k !== this._cursor) { this._cursor = k; this.sync(); }
+  }
+  /** 兼容旧调用：等同 back()（退一手，不清盘） */
+  undo() { this.back(); }
+
   clear() {
-    if (!this.stones.length) return;
-    this.undoStack.push(this.stones.slice());
-    this.stones = [];
+    if (!this.full.length) return;
+    this.full = [];
+    this._cursor = 0;
     this.sync();
   }
+  /** 载入一整条序列（棋谱/存档/对弈局面）：整条进 full，光标停在末手 */
   set(stones) {
-    this.undoStack.push(this.stones.slice());
-    this.stones = stones.map(s => ({r: +s.r, c: +s.c}));
+    this.full = (stones || []).map(s => ({r: +s.r, c: +s.c}));
+    this._cursor = this.full.length;
     this.sync();
   }
   /** 服务端返回的 stones（带 p/n）→ 编辑器内部格式 */
@@ -307,7 +334,7 @@ class PositionEditor {
     this.set((stones || []).slice().sort((a, b) => (a.n || 0) - (b.n || 0)));
   }
 
-  get current() { return this.stones.length % 2 === 0 ? 1 : 2; }
+  get current() { return this._cursor % 2 === 0 ? 1 : 2; }
 
   sync() {
     const view = this.stones.map((s, i) => ({
@@ -317,7 +344,7 @@ class PositionEditor {
       stones: view,
       lastMove: view.length ? view[view.length - 1] : null,
     });
-    this.onChange(this.stones, this.current);
+    this.onChange(this.stones, this.current, this);
   }
 }
 

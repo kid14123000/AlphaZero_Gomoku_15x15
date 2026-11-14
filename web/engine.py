@@ -223,11 +223,19 @@ def game_value_series(moves, model_file=None, winner=None):
 
     黑胜率换算：黑该走时 = 50+50v，白该走时 = 50-50v（v 是执子方视角）。
 
-    若传入 winner（1 黑 / 2 白 / -1 和），末尾额外追加一个 terminal 点，
-    表示「终局真相」——网络最后一步的估值可以直接和它对照，
-    一眼看出网络在收官阶段估得准不准。终端点的 n = 手数+1。
+    🚨 手数口径（n = 盘面上的子数，= 已下完的手数）：
+      第 i 个点评估的是「盘面 i 子」的局面，所以 n 必须写 i，**不能写 i+1**。
+      旧实现写 i+1，导致曲线上每个点都往右错一位：空盘被标成「第1手」、
+      29 子被标成「第30手」、真正的 30 子终局盘面根本没进曲线；
+      而回放页光标停在 n 手时盘面是 n 子 ⇒ 卡片拿到的估值总是差一手。
+      现在 n == 子数 == 回放页光标 == 网络前向页的「N 手」，三处同口径。
 
-    9×9 小网每步约 1ms，一局 40 手总共 ~40ms，可以随详情接口一起返回。
+    若传入 winner（1 黑 / 2 白 / -1 和），末尾追加一个 terminal 点：
+      n = 总手数，black_pct = 真实结果（0/100），
+      net_black_pct = 网络对**终局盘面**的估值 —— 白已连五它还给黑 69% 的那种
+      盲区，靠这个字段暴露出来，不再被真实结果盖住。
+
+    V24Net 在 GPU 上每步约 1ms，一局 40 手总共 ~40ms，可以随详情接口一起返回。
     """
     try:
         net = get_net(model_file)
@@ -258,7 +266,7 @@ def game_value_series(moves, model_file=None, winner=None):
             bi = int(np.argmax(masked))
             best = [bi // WIDTH, bi % WIDTH]
         out.append({
-            'n': i + 1,
+            'n': i,                 # ← 盘面 i 子（不是 i+1）
             'r': r, 'c': c,
             'player': int(cur),
             'value': round(float(val), 4),
@@ -269,16 +277,24 @@ def game_value_series(moves, model_file=None, winner=None):
             'is_best': bool(best is not None and best[0] == r and best[1] == c),
         })
         b.do_move(m)
-    # 终局真相点：让曲线收口到真实结果，方便对照网络最后一步的估值
+    # 终局真相点：n = 总手数（盘面满子），真实结果 + 网络对终局盘面的估值
     if winner in (1, 2, -1) and out:
         bp = 100.0 if winner == 1 else (0.0 if winner == 2 else 50.0)
+        net_bp = None
+        try:
+            cur = b.current_player
+            _p, val, _l = clean_eval(net, b)
+            net_bp = round(50.0 + 50.0 * val if cur == BLACK else 50.0 - 50.0 * val, 2)
+        except Exception:                   # noqa: BLE001
+            net_bp = None
         out.append({
-            'n': len(out) + 1,
+            'n': len(out),          # 走完所有手 ⇒ 子数 == len(out)
             'r': None, 'c': None,
             'player': None,
             'value': None,
             'black_pct': bp,
             'white_pct': 100.0 - bp,
+            'net_black_pct': net_bp,
             'prior': None,
             'net_best': None,
             'is_best': False,
@@ -334,7 +350,7 @@ def game_q_series(moves, model_file=None, sims=100, c_puct=5.0, winner=None):
         except Exception:                   # noqa: BLE001
             prior = None
         out.append({
-            'n': i + 1, 'r': r, 'c': c, 'player': int(cur),
+            'n': i, 'r': r, 'c': c, 'player': int(cur),
             'value': round(q, 4),
             'black_pct': round(black, 2),
             'white_pct': round(100.0 - black, 2),
@@ -348,7 +364,7 @@ def game_q_series(moves, model_file=None, sims=100, c_puct=5.0, winner=None):
     if winner in (1, 2, -1) and out:
         bp = 100.0 if winner == 1 else (0.0 if winner == 2 else 50.0)
         out.append({
-            'n': len(out) + 1, 'r': None, 'c': None, 'player': None,
+            'n': len(out), 'r': None, 'c': None, 'player': None,
             'value': None, 'black_pct': bp, 'white_pct': 100.0 - bp,
             'prior': None, 'net_best': None, 'is_best': False,
             'terminal': True, 'source': 'mcts',

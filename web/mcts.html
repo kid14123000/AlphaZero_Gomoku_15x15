@@ -12,21 +12,27 @@
 <h1>🔍 MCTS 搜索可视化 <small>摆谱 → 模拟 → 看搜索把概率挪到哪</small></h1>
 <div class="sub">左侧摆任意局面（点空点落子，点已有棋子=退回到该手之前），选权重跑搜索。每次模拟的路径都能回放。</div>
 
-<div class="wrap">
-  <!-- 摆谱 -->
-  <div class="col-main">
+<div class="wrap3">
+  <!-- A 列：摆谱 + 最终候选（重要结论放最左，不用横跨整页去找） -->
+  <div class="colx" style="flex:0 0 380px">
     <div class="board-wrap">
       <canvas id="setup" class="board"></canvas>
       <div class="thinking" id="thinking1"><div class="spinner"></div><span>搜索中…</span></div>
     </div>
-    <div class="card" style="margin-top:10px;padding:10px 12px">
+    <div class="card" style="padding:10px 12px">
       <div class="ctl" style="margin-bottom:6px">
         <span style="font-size:12px;color:#64748b">当前该走：</span>
         <b id="curColor" style="color:#93c5fd">⚫ 黑</b>
         <span class="hint" style="margin:0" id="setupInfo">空盘</span>
+        <b id="cursorInfo" style="margin-left:auto;font-size:11.5px;color:#64748b;font-variant-numeric:tabular-nums">0 / 0</b>
+      </div>
+      <div class="ctl" style="margin-bottom:6px">
+        <button class="tiny" onclick="ed.first()" title="跳到开头（空盘）">⏮ 开头</button>
+        <button class="tiny" onclick="ed.back()" title="退一手">◀ 回退</button>
+        <button class="tiny" onclick="ed.forward()" title="进一手">前进 ▶</button>
+        <button class="tiny" onclick="ed.last()" title="跳到最后一手">结局 ⏭</button>
       </div>
       <div class="ctl" style="margin-bottom:0">
-        <button class="tiny" onclick="ed.undo()">↩ 回退</button>
         <button class="tiny" onclick="ed.clear()">🗑 清空</button>
         <button class="tiny" onclick="takeGameBoard()">📋 取对弈局面</button>
         <button class="tiny" onclick="savePos()">💾 存</button>
@@ -35,15 +41,20 @@
         </select>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-title">🎯 最终候选 <span class="t2" id="bestMeta"></span></div>
+      <div id="bestBox"><div class="empty">还没有搜索结果</div></div>
+    </div>
   </div>
 
-  <!-- 结果棋盘 -->
-  <div class="col-main">
+  <!-- B 列：结果棋盘（热力图缩到 460，原 564 太占地方）+ 候选明细 -->
+  <div class="colx" style="flex:0 0 460px">
     <div class="board-wrap">
       <canvas id="result" class="board"></canvas>
       <div class="thinking" id="thinking2"><div class="spinner"></div><span>搜索中…</span></div>
     </div>
-    <div class="card" style="margin-top:10px;padding:10px 12px">
+    <div class="card" style="padding:10px 12px">
       <div class="ctl" style="margin-bottom:0">
         <label style="min-width:auto">热力图</label>
         <select id="heatMode" onchange="drawResult()">
@@ -53,11 +64,16 @@
         <span class="hint" style="margin:0">★ = 最终选点</span>
       </div>
     </div>
+
+    <div class="card">
+      <div class="card-title">📊 候选明细 <span class="t2">按访问次数</span></div>
+      <div class="scroll" id="candTable" style="max-height:230px"><div class="empty">还没有搜索结果</div></div>
+    </div>
   </div>
 
-  <!-- 控制 + 结果 -->
-  <div class="col-side">
-    <div class="card" style="margin-bottom:12px">
+  <!-- C 列：设置 + 偏离 + 深度 + 回放（原先全挤在这一列，现在只剩 3 张） -->
+  <div class="colx" style="flex:1 1 320px">
+    <div class="card">
       <div class="card-title">搜索设置</div>
       <div class="ctl">
         <label>权重</label>
@@ -87,22 +103,12 @@
       </div>
     </div>
 
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-title">🎯 最终候选 <span class="t2" id="bestMeta"></span></div>
-      <div id="bestBox"><div class="empty">还没有搜索结果</div></div>
-    </div>
-
-    <div class="card" style="margin-bottom:12px">
-      <div class="card-title">📊 候选明细 <span class="t2">按访问次数</span></div>
-      <div class="scroll" id="candTable"><div class="empty">还没有搜索结果</div></div>
-    </div>
-
-    <div class="card" style="margin-bottom:12px">
+    <div class="card">
       <div class="card-title">🧭 搜索 vs 网络先验 <span class="t2">偏离越大 = 搜索改主意越多</span></div>
       <div id="devBox"><div class="empty">还没有搜索结果</div></div>
     </div>
 
-    <div class="card" style="margin-bottom:12px">
+    <div class="card">
       <div class="card-title">📏 模拟深度分布 <span class="t2" id="depthMeta"></span></div>
       <div style="position:relative;height:130px"><canvas id="depthChart"></canvas></div>
       <div class="hint" style="margin:6px 0 0">policy/value 配合好 → 搜得深；大量停在 1~2 层 = 先验分散、在浅层乱撞。</div>
@@ -114,7 +120,7 @@
         <input type="range" id="step" min="0" max="0" value="0" style="flex:1" oninput="showStep()">
         <b id="stepV" style="min-width:52px;text-align:right">–</b>
       </div>
-      <div class="scroll" id="stepBox" style="max-height:190px">
+      <div class="scroll" id="stepBox" style="max-height:150px">
         <div class="empty">跑一次搜索后可逐条回放每次模拟的路径</div>
       </div>
     </div>
@@ -135,15 +141,19 @@ async function init() {
   await loadBoardSize();        // 9×9 还是 15×15，由服务端日志决定
   ed = new PositionEditor($('setup'), {
     size: 380,
-    onChange: (stones, cur) => {
+    onChange: (stones, cur, editor) => {
       $('curColor').innerHTML = cur === 1 ? '⚫ 黑' : '⚪ 白';
       $('curColor').style.color = cur === 1 ? '#93c5fd' : '#fcd34d';
       $('setupInfo').textContent = stones.length
         ? `${stones.length} 手 · 轮到${cur === 1 ? '黑' : '白'}`
         : '空盘';
+      const ci = $('cursorInfo');
+      if (ci && editor) ci.textContent = `${editor.cursor} / ${editor.total}`;
     },
   });
-  rview = new BoardView($('result'), {size: BOARD_PX, showNumbers: true, hover: false});
+  // 结果棋盘比摆谱盘略大即可；原来用 BOARD_PX(564) 太占地方，把整页挤成一列
+  const RESULT_PX = Math.min(460, BOARD_PX);
+  rview = new BoardView($('result'), {size: RESULT_PX, showNumbers: true, hover: false});
   ['nplayout', 'cpuct', 'temp'].forEach(id => {
     $(id).addEventListener('input', e => {
       const v = id === 'temp' ? Number(e.target.value).toFixed(2)

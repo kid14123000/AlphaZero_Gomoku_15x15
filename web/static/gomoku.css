@@ -23,6 +23,21 @@ h1 small{font-size:.72rem;color:#64748b;font-weight:400}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px}
 .card{background:#1e293b;border-radius:10px;padding:12px 14px;flex:1;min-width:200px}
 .card.narrow{min-width:0}
+
+/* ── 三列竖排（每列自己堆，不用 grid 行对齐 → 不会出现"某列下面一大片空"）──
+ * 用法：<div class="wrap3"><div class="colx colx-a">…</div>…</div>
+ * 每列是 flex column，卡片按 DOM 顺序自上而下堆，列高互相独立。
+ * 卡片务必写 style="flex:0 0 auto"（.card 的 flex:1 在 column 方向会被拉伸）。 */
+.wrap3{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
+.wrap3 > .colx{display:flex;flex-direction:column;gap:12px;min-width:0}
+.wrap3 .colx > .card, .wrap3 .colx > .board-wrap{flex:0 0 auto;width:100%}
+
+/* ── 图表卡（index / replay / mcts 共用；原先只在 index.html 内联定义，
+ *    replay.html 没定义 → .chartcard 背景全透明、.chartbox 没高度 ⇒ 图表被压成
+ *    canvas 默认 300×150，在 700px 的槽里只剩 300 宽。挪到这里统一。 ── */
+.chartcard{background:#1e293b;border-radius:10px;padding:12px 14px 8px;flex:1;min-width:340px}
+.chartcard .hint{font-size:.7rem;color:#475569;margin:2px 0 6px}
+.chartbox{position:relative;height:205px}
 .card-title{font-size:.7rem;color:#64748b;text-transform:uppercase;letter-spacing:.5px;
             margin-bottom:8px;font-weight:600;display:flex;justify-content:space-between;
             align-items:baseline;gap:8px}

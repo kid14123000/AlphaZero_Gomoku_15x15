@@ -1,0 +1,11 @@
+# 核心训练
+numpy>=1.24
+torch>=2.0
+
+# 画图脚本（draw_*.py / probe_center_policy.py）
+matplotlib>=3.7
+
+# 看板（web_flask/）
+flask>=3.0
+boardgame2>=0.26.0
+gym==0.26.2          # boardgame2 依赖旧 gym；与 numpy>=2 不兼容，装了会有警告
