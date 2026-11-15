@@ -432,7 +432,11 @@ class TrainPipeline():
                 print('[warmup] buffer %d < %d，暂停学习直到数据够'
                       % (len(self.data_buffer), self.warmup_min_buffer), flush=True)
                 self._warmup_warned = True
-            return 0
+            # 🚨 必须返回 2 元组：调用方是 `loss, entropy = self.policy_update()`。
+            #    返回裸 0 会 TypeError: cannot unpack non-iterable int object ——
+            #    从 ckpt 续训时 data_buffer 从 0 长大，必然经过 batch_size..warmup_min_buffer
+            #    这段区间，单进程训练会在第一次 update 就崩。
+            return 0.0, 0.0
         self._warmup_warned = False
         # ② 前 warmup_updates 次线性升 LR（0.2× → 1.0×）
         if self.warmup_updates > 0 and self._n_update < self.warmup_updates:
