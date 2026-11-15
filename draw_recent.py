@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """抽最近几局训练对局画出分阶段局面（黑胜/白胜 × 短局/长局）"""
 import json
+import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -48,8 +49,9 @@ for i, (tag, g) in enumerate(rows):
 fig.suptitle(f"最近训练对局抽样（{model}｜400 模拟｜temp=1.0）\n"
              f"红圈 = 该截面最后一手；棋子上的数字 = 手顺", fontsize=11.5)
 fig.tight_layout(rect=[0, 0, 1, 0.96])
-fig.savefig("/Users/kid/Downloads/训练对局抽样_450代.png", dpi=170, bbox_inches="tight")
-print("已保存 /Users/kid/Downloads/训练对局抽样_450代.png")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "训练对局抽样_450代.png")
+fig.savefig(OUT, dpi=170, bbox_inches="tight")
+print("已保存 " + OUT)
 for tag, g in rows:
     mv = [tuple(x) for x in g['moves']]
     print(f"局{g['batch']} {tag} {len(mv)}手 开局 {' '.join(nm(p) for p in mv[:10])}")

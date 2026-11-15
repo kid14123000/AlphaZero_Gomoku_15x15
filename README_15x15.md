@@ -281,7 +281,7 @@ cd ~/AlphaZero_Gomoku
 1. `git archive HEAD | tar -x` 导出干净工作区，**丢掉上游历史**（历史里有网易公司邮箱 / 北航邮箱等第三方信息）
 2. 删 `gomoku_checkpoints/`（156 个指向本地 `checkpoints/` 的符号链接，发布出去全是断链）
 3. 删上游示例权重 `best_policy_*.model2`
-4. 5 处硬编码 `/Users/kid/...` 改成 `os.path.dirname(__file__)` 推算
+4. 5 处硬编码家目录路径改成 `os.path.dirname(__file__)` 推算
 5. 提交作者用 `kid14123000@users.noreply.github.com`，不用真实邮箱
 6. 补 `requirements.txt`（原仓库没有；`boardgame2` 是外部 PyPI 包，之前没记录）
 7. README 重写（网络 / 训练策略 / 设备 / 产出效率 / 曲线 / 调整时间线 / 人机对局）

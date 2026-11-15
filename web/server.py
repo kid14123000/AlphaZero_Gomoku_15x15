@@ -176,6 +176,12 @@ def build_payload(path, window=20):
     batch = max([g.get('batch', 0) for g in games] or [0])
     run_start_t = start.get('t') or 0
 
+    # 🚨 滚动窗口统一 20 局（图表滚动 + KPI 卡「近 N 局」都用它）：
+    #    用户要的是「当前手感」，不是万局跨度上的平滑趋势。
+    #    代价是长跨度上锯齿更密，看趋势要配合下方分版本表格。
+    ROLL = 20
+    MIN_N = max(5, ROLL // 4)        # 25% 门槛，避免小样本算出 0%/100%
+
     # ---- self-play result stats (winner 1 = black/player1, 2 = white, -1 = tie)
     wc = Counter(g.get('winner') for g in games)
     black, white, tie = wc.get(1, 0), wc.get(2, 0), wc.get(-1, 0)
@@ -187,8 +193,8 @@ def build_payload(path, window=20):
     lens_last = [g.get('episode_len', 0) for g in last]
 
     # 近 N 局胜率。全量胜率在长跑里被历史锁死（12000 局时永远停在 62%），
-    # 看不出「现在」的棋力，所以 KPI 卡改用近 100 局；全量留作副标题参考。
-    wr_win = min(100, played)
+    # 看不出「现在」的棋力，所以 KPI 卡也跟图表一样用近 20 局；全量留作副标题参考。
+    wr_win = min(ROLL, played)
     wl = games[-wr_win:] if games else []
     wcw = Counter(g.get('winner') for g in wl)
     wr_black, wr_white, wr_tie = wcw.get(1, 0), wcw.get(2, 0), wcw.get(-1, 0)
@@ -214,11 +220,6 @@ def build_payload(path, window=20):
     # With fewer than MIN_N games in the window the estimate is pure noise
     # (1 game => 0% or 100%), so emit null and let the chart start later.
     #
-    # 🚨 图表滚动窗口（ROLL）和「近 N 局」KPI（window=20）是两回事：
-    #    20 局滚动在 1 万局的跨度上锯齿太密，趋势被噪声吃掉，所以图表用 100 局。
-    #    但均手 KPI 卡仍要「近 20 局」—— 那是看当下的短期手感，取 100 会变迟钝。
-    ROLL = 100
-    MIN_N = max(5, ROLL // 4)        # 保持原来的 25% 门槛，避免小样本算出 0%/100%
     bwr_roll, wwr_roll, len_roll = [], [], []
     for i in range(len(games)):
         lo = max(0, i - ROLL + 1)

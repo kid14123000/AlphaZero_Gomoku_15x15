@@ -10,7 +10,7 @@ import json, sys, os, importlib.util
 import numpy as np
 import torch
 
-ROOT = '/Users/kid/AlphaZero_Gomoku_15x15_v4'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 spec = importlib.util.spec_from_file_location('gv4', os.path.join(ROOT, 'Gomoku-v0_pt_v4.py'))
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)

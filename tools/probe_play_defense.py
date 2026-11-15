@@ -17,13 +17,14 @@ AI vs AI 连打几局（每手都由页面的 /api/play 产生），把整盘手
   · 落子是否等于网络 raw 约定的 top1 → 与已验证正确的约定是否一致
 """
 import json
+import os
 import sys
 import urllib.request
 
 API = 'http://127.0.0.1:8773'
 N = 15
 
-sys.path.insert(0, '/Users/kid/AlphaZero_Gomoku_15x15_v4/web')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'web'))
 import combat  # noqa: E402
 
 combat.set_board(N, 5)

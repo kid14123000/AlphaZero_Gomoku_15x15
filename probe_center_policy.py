@@ -57,7 +57,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--model", default="current_policy.model")
 ap.add_argument("--games", default="games_1649.json")
 ap.add_argument("--plies", type=int, default=12)
-ap.add_argument("--out-png", default="/Users/kid/Downloads/policy_center_heatmap.png")
+ap.add_argument("--out-png", default="policy_center_heatmap.png")
 ap.add_argument("--out-json", default="policy_center.json")
 a = ap.parse_args()
 
