@@ -547,14 +547,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._err('棋谱不存在: idx=%s' % idx)
                 return
             g['ok'] = True
-            # 逐步数值（黑/白胜率）：对每一步落子前的局面跑一次干净前向。
-            # ?values=0 可跳过（列表里连续翻局时省时间；9×9 一局约 40ms）。
+            # 逐步数值（黑/白胜率）来源优先级：
+            #   ① 训练时落盘的逐手 MCTS 根 Q（g.get('qs')）—— 零计算，且是**当时那一手
+            #      实际做决策时**的搜索价值，比事后重算更忠实
+            #   ② 没有 qs 的老棋谱（本功能上线前采的）才回落到干净前向
+            # ?values=0 仍可整体跳过。
             want = (qs.get('values') or ['1'])[0]
             if want not in ('0', 'false', 'no'):
                 try:
                     import engine
-                    g['values'] = engine.game_value_series(
-                        g.get('moves'), winner=g.get('winner'))
+                    src = 'forward'
+                    g['values'] = []
+                    if g.get('qs'):
+                        g['values'] = engine.q_series_from_qs(
+                            g.get('moves'), g.get('qs'), g.get('winner'))
+                        if g['values']:
+                            src = 'qs'
+                    if not g['values']:
+                        g['values'] = engine.game_value_series(
+                            g.get('moves'), winner=g.get('winner'))
+                        src = 'forward'
+                    g['values_source'] = src
                     g['divide'] = engine.find_divide(g['values'], g.get('winner'))
                 except Exception as exc:      # noqa: BLE001  没权重时不影响棋谱浏览
                     g['values'] = []

@@ -156,11 +156,18 @@ def ingest(trainer, files, args, games_file):
             try:
                 mv = [[int(m) // trainer.board_width, int(m) % trainer.board_width]
                       for m in moves]
+                rec = {'batch': n, 'winner': winner,
+                       'episode_len': int(len(probs)),
+                       'black_sims': black_sims,
+                       'moves': mv}
+                # 逐手 MCTS 根 Q（该走方视角）一起落盘：回放页的「逐步胜率」
+                # 直接用它，不用再拿当前权重重新前向 —— 这是**当时那一手实际做决策时**
+                # 的搜索价值，比事后重算更忠实，而且零计算。
+                # 21 手 ≈ 200 字节/局，可忽略。
+                if qs_in is not None and len(qs_in) == len(probs):
+                    rec['qs'] = [round(float(v), 4) for v in qs_in]
                 with open(games_file, 'a') as gf:
-                    gf.write(json.dumps({'batch': n, 'winner': winner,
-                                         'episode_len': int(len(probs)),
-                                         'black_sims': black_sims,
-                                         'moves': mv}, ensure_ascii=False) + '\n')
+                    gf.write(json.dumps(rec, ensure_ascii=False) + '\n')
             except Exception as e:          # noqa: BLE001
                 print('save_games failed:', e, flush=True)
 

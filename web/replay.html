@@ -42,7 +42,7 @@
     </div>
 
     <div class="card" style="padding:12px 14px 8px">
-      <div class="card-title">逐步胜率 <span class="t2">网络估值 · 落子前那一刻</span></div>
+      <div class="card-title">逐步胜率 <span class="t2" id="valSrc">网络估值 · 落子前那一刻</span></div>
       <!-- 图表 + 当前手数值：左右并排，数值卡不再单独占一整行 -->
       <div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap">
         <div style="flex:1 1 0;min-width:0">
@@ -441,6 +441,16 @@ let valLabels = [], valCursorY = [];
 
 function renderValueChart() {
   const all = (g && g.values) || [];
+  // 数据来源：qs = 训练时逐手采集的 MCTS 根 Q（零计算、当时视角）
+  //           forward = 没有 qs 的老棋谱，用当前权重干净前向重算
+  const src = (g && g.values_source) || 'forward';
+  const srcEl = $('valSrc');
+  if (srcEl) {
+    srcEl.textContent = src === 'qs'
+      ? '训练时采集的 MCTS 根 Q · 当时的搜索价值'
+      : '网络估值 · 落子前那一刻（现算）';
+    srcEl.style.color = src === 'qs' ? '#4ade80' : '';
+  }
   // terminal 点是终局真相，不参与「最高/最低」统计（否则恒为 0/100）
   const vals = all.filter(v => !v.terminal);
   const meta = $('valMeta');
@@ -490,7 +500,10 @@ function renderValueChart() {
                 const extra = [];
                 if (v.prior != null) extra.push(`网络给这步概率 ${(v.prior * 100).toFixed(1)}%`);
                 if (v.net_best) extra.push(`网络首选 ${v.net_best[0]},${v.net_best[1]}`);
-                extra.push(v.is_best ? '✓ 实际下的就是网络首选' : '✗ 实际不是网络首选');
+                if (v.q != null) extra.push(`根 Q ${v.q >= 0 ? '+' : ''}${v.q.toFixed(3)}（训练时采集）`);
+                // is_best 为 null 表示这条曲线没跑网络（qs 来源），不能判「不是首选」
+                if (v.is_best === true) extra.push('✓ 实际下的就是网络首选');
+                else if (v.is_best === false) extra.push('✗ 实际不是网络首选');
                 return extra;
               },
             },
@@ -585,10 +598,13 @@ function renderValueNow(n) {
     <div class="sub">白胜率 <b>${v.white_pct.toFixed(1)}%</b> · ${lead}</div>
     <div class="sub">盘面 <b>${v.n}</b> 子 · 轮到 ${side}（估值即此刻）</div>
     <div class="sub">${side} 随后下在 <b>${v.r},${v.c}</b>（第 ${v.n + 1} 手）</div>
-    <div class="sub">网络给这一步概率 <b>${v.prior == null ? '—' : (v.prior * 100).toFixed(1) + '%'}</b>
-      ${v.net_best ? ` · 网络首选 <b>${v.net_best[0]},${v.net_best[1]}</b>` : ''}</div>
-    <div class="sub">${v.is_best ? '<span style="color:#4ade80">✓ 就是网络的首选</span>'
-                                : '<span style="color:#fbbf24">✗ 不是网络首选</span>'}</div>`;
+    ${v.prior == null ? (v.q != null
+        ? `<div class="sub">根 <b>Q = ${v.q >= 0 ? '+' : ''}${v.q.toFixed(3)}</b>（${side}视角，训练时采集）</div>`
+        : '')
+      : `<div class="sub">网络给这一步概率 <b>${(v.prior * 100).toFixed(1)}%</b>${
+          v.net_best ? ` · 网络首选 <b>${v.net_best[0]},${v.net_best[1]}</b>` : ''}</div>
+         <div class="sub">${v.is_best ? '<span style="color:#4ade80">✓ 就是网络的首选</span>'
+                                      : '<span style="color:#fbbf24">✗ 不是网络首选</span>'}</div>`}`;
 }
 
 function markValueCursor(n) {
@@ -673,7 +689,9 @@ function renderRecalcChart() {
   const dNew = recalcData.divide || {};
   const baseLabel = recalcPrev
     ? '基线（' + shortModel(recalcPrev) + ' · ' + methodTxt(recalcPrev) + '）'
-    : '原估值（单次前向）';
+    : ((g && g.values_source === 'qs')
+        ? '原估值（训练时采集的根 Q）'
+        : '原估值（单次前向）');
 
   if (!recalcChart) {
     recalcChart = new Chart($('c-recalc').getContext('2d'), {

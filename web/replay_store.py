@@ -43,6 +43,7 @@ class GameStore(object):
         self._mtime = None
         self._rows = []        # 摘要: (idx, batch, winner, episode_len, h)
         self._moves = {}       # idx -> moves（懒加载）
+        self._qs = {}          # idx -> 逐手 MCTS 根 Q（懒加载；老棋谱为 None）
         # 战斗指标缓存：**手顺指纹 h** -> dict。持久化到 sidecar，避免每次重算。
         # 🚨 不能按 idx 缓存：训练重启会换新 games.jsonl，idx 相同的其实是另一局。
         self._combat = {}
@@ -88,6 +89,7 @@ class GameStore(object):
                 idx += 1
         self._rows = rows
         self._moves = {}
+        self._qs = {}
         self._mtime = mt
 
     # ── 查询 ───────────────────────────────────────────────
@@ -128,6 +130,9 @@ class GameStore(object):
             return None
         row = dict(self._rows[idx])
         row['moves'] = moves
+        qs = self._qs.get(idx)
+        if qs:
+            row['qs'] = qs
         row['combat'] = self.combat_of(idx, moves)
         return row
 
@@ -151,6 +156,11 @@ class GameStore(object):
                 if n == idx:
                     moves = [[int(m[0]), int(m[1])] for m in d['moves']]
                     self._moves[idx] = moves
+                    # 顺带缓存该局的逐手 MCTS 根 Q（新棋谱才有；老棋谱为 None）
+                    qs = d.get('qs')
+                    self._qs[idx] = ([float(v) for v in qs]
+                                     if isinstance(qs, list) and len(qs) == len(moves)
+                                     else None)
                     return moves
                 n += 1
         return None

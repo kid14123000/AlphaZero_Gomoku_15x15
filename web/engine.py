@@ -303,6 +303,62 @@ def game_value_series(moves, model_file=None, winner=None):
     return out
 
 
+def q_series_from_qs(moves, qs, winner=None):
+    """用**训练时逐手采集的 MCTS 根 Q** 直接拼出逐步胜率，不做任何前向计算。
+
+    与 game_value_series / game_q_series 的区别：
+      game_value_series  单次前向（快，但用的是**当前**权重）—— 事后视角
+      game_q_series      现跑 MCTS（慢）—— 事后视角
+      q_series_from_qs   **当时那一手实际做决策时的搜索价值**（训练落盘）—— 零成本
+
+    Q 口径（实测核对过，见 queue/*.npz）：
+      qs[i] = 走到第 i 手之前、轮到某方时的根 Q，**该走方视角** ∈ [-1,1]
+      自对弈黑先手 ⇒ i 偶数 = 黑走、i 奇数 = 白走
+      黑胜率 = 50 + 50·q（黑走） / 50 - 50·q（白走）
+
+    返回结构与 game_value_series 完全一致（n = 盘面子数），所以前端不用改：
+    额外多个 'q' 字段（根 Q 原值），以及 net_best/prior 为 None
+    —— 因为落盘只存了 Q，没存当时的先验与首选点。
+    """
+    try:
+        n_mv = len(moves or [])
+        q_arr = [float(v) for v in (qs or [])]
+    except (TypeError, ValueError):
+        return []
+    if not n_mv or len(q_arr) != n_mv:
+        return []
+    out = []
+    for i, mv in enumerate(moves):
+        try:
+            r, c = int(mv[0]), int(mv[1])
+        except (TypeError, IndexError, ValueError):
+            break
+        player = BLACK if i % 2 == 0 else WHITE
+        q = q_arr[i]
+        black = 50.0 + 50.0 * q if player == BLACK else 50.0 - 50.0 * q
+        out.append({
+            'n': i,                 # 盘面 i 子（与 game_value_series 同口径）
+            'r': r, 'c': c,
+            'player': int(player),
+            'value': round(q, 4),
+            'q': round(q, 4),
+            'black_pct': round(black, 2),
+            'white_pct': round(100.0 - black, 2),
+            'prior': None, 'net_best': None, 'is_best': None,
+            'source': 'qs',
+        })
+    if winner in (1, 2, -1):
+        bp = 100.0 if winner == 1 else (0.0 if winner == 2 else 50.0)
+        out.append({
+            'n': len(out), 'r': None, 'c': None, 'player': None,
+            'value': None, 'black_pct': bp, 'white_pct': 100.0 - bp,
+            'net_black_pct': None,      # 没跑网络，不给假值
+            'prior': None, 'net_best': None, 'is_best': None,
+            'terminal': True, 'source': 'qs',
+        })
+    return out
+
+
 def game_q_series(moves, model_file=None, sims=100, c_puct=5.0, winner=None):
     """用 MCTS 搜索价值重算整局逐步 Q —— 和训练时 value 标签同口径。
 
