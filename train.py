@@ -53,6 +53,7 @@ class TrainPipeline():
                  play_batch_size=1, epochs=5, batch_size=512,
                  pure_mcts_playout_num=1000, metrics_file=None,
                  batch_offset=0, init_lr_multiplier=1.0, ckpt_dir='checkpoints',
+                 warmup_min_buffer=2000, warmup_updates=10,
                  save_games=None, gate_step=200, gate_max=1200,
                  rapfi_bin=None, rapfi_depth=2, rapfi_every=0, rapfi_games=4,
                  rapfi_who='absolute', eval_pure=0, value_target='z',
@@ -153,6 +154,12 @@ class TrainPipeline():
                          value_target=self.value_target)
         # restored adaptive learning-rate state (resuming a long run)
         self.lr_multiplier = init_lr_multiplier
+        # ── 续训 warmup：① buffer 不够就不学（避免对着几局数据反复过拟合）
+        #                ② 前 N 次 update 线性升 LR（首更只给 20%）──
+        self.warmup_min_buffer = int(warmup_min_buffer)
+        self.warmup_updates = int(warmup_updates)
+        self._n_update = 0
+        self._warmup_warned = False
         if init_model:
             # start training from an initial policy-value net
             self.policy_value_net = PolicyValueNet(self.board_width,
@@ -418,7 +425,21 @@ class TrainPipeline():
         return out
 
     def policy_update(self):
-        """update the policy-value net"""
+        """update the policy-value net（含续训 warmup）"""
+        # ① buffer 太小就跳过：早期对着 4~6 局数据跑 5 epoch 会把权重推歪
+        if len(self.data_buffer) < self.warmup_min_buffer:
+            if not self._warmup_warned:
+                print('[warmup] buffer %d < %d，暂停学习直到数据够'
+                      % (len(self.data_buffer), self.warmup_min_buffer), flush=True)
+                self._warmup_warned = True
+            return 0
+        self._warmup_warned = False
+        # ② 前 warmup_updates 次线性升 LR（0.2× → 1.0×）
+        if self.warmup_updates > 0 and self._n_update < self.warmup_updates:
+            _warm = 0.2 + 0.8 * (self._n_update / float(self.warmup_updates))
+        else:
+            _warm = 1.0
+        self._n_update += 1
         mini_batch = self.sample_batch()
         state_batch = [data[0] for data in mini_batch]
         mcts_probs_batch = [data[1] for data in mini_batch]
@@ -429,7 +450,7 @@ class TrainPipeline():
                     state_batch,
                     mcts_probs_batch,
                     winner_batch,
-                    self.learn_rate*self.lr_multiplier)
+                    self.learn_rate*self.lr_multiplier*_warm)
             new_probs, new_v = self.policy_value_net.policy_value(state_batch)
             kl = np.mean(np.sum(old_probs * (
                     np.log(old_probs + 1e-10) - np.log(new_probs + 1e-10)),

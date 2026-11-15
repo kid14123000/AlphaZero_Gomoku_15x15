@@ -222,6 +222,11 @@ def main():
     ap.add_argument('--init_model', type=str, default=None)
     ap.add_argument('--batch_offset', type=int, default=0)
     ap.add_argument('--init_lr_multiplier', type=float, default=1.0)
+    ap.add_argument('--warmup_min_buffer', type=int, default=2000,
+                    help='buffer 少于此值不学习（避免小样本过拟合把权重推歪）')
+    ap.add_argument('--warmup_updates', type=int, default=10,
+                    help='前 N 次 update 的 LR 从 0.2x 线性升到 1x')
+
     ap.add_argument('--ckpt_dir', type=str, default='checkpoints')
     ap.add_argument('--metrics_file', type=str, default='logs/metrics.jsonl')
     ap.add_argument('--save-games', dest='save_games', type=str, default='')
@@ -279,6 +284,8 @@ def main():
                value_target=args.value_target,
                batch_offset=args.batch_offset,
                init_lr_multiplier=args.init_lr_multiplier,
+               warmup_min_buffer=args.warmup_min_buffer,
+               warmup_updates=args.warmup_updates,
                ckpt_dir=args.ckpt_dir,
                dirichlet_eps=args.dirichlet_eps,
                dirichlet_alpha=args.dirichlet_alpha,
