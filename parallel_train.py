@@ -192,6 +192,27 @@ def ingest(trainer, files, args, games_file):
     return got, prev
 
 
+def mirror_path(ckpt_dir, name, model_out=None):
+    """current_policy / best_policy 镜像的落盘路径（与 train.py::_mirror_path 同规则）。
+
+    🚨 这两份是覆盖写的活权重，web/engine.py 与一堆探针按项目根固定路径读。
+    用 --ckpt_dir /tmp/xxx 跑测试却无条件写 './'，会把看板在用的权重悄悄换掉。
+    """
+    mo = (model_out or '').strip()
+    if mo.lower() == 'none':
+        return None
+    if mo:
+        os.makedirs(mo, exist_ok=True)
+        return os.path.join(mo, name)
+    ck = (ckpt_dir or '').strip()
+    if not ck:
+        return None
+    if os.path.basename(os.path.normpath(ck)) != 'checkpoints':
+        os.makedirs(ck, exist_ok=True)
+        return os.path.join(ck, name)
+    return name
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--workers', type=int, default=8)
@@ -228,6 +249,9 @@ def main():
                     help='前 N 次 update 的 LR 从 0.2x 线性升到 1x')
 
     ap.add_argument('--ckpt_dir', type=str, default='checkpoints')
+    ap.add_argument('--model_out', type=str, default=None,
+                    help='current_policy 镜像目录。默认自动：ckpt_dir 是 checkpoints '
+                         '时写项目根（历史行为），其他目录写进 ckpt_dir；none=不写')
     ap.add_argument('--metrics_file', type=str, default='logs/metrics.jsonl')
     ap.add_argument('--save-games', dest='save_games', type=str, default='')
     ap.add_argument('--handicap_file', type=str, default='',
@@ -371,8 +395,10 @@ def main():
                                                    'ckpt_it%d.model'
                                                    % trainer.game_batch_cur))
                     # current_policy 也留一份老习惯的路径
-                    atomic_torch_save(trainer.policy_value_net,
-                                      './current_policy.model')
+                    _mp = mirror_path(args.ckpt_dir, 'current_policy.model',
+                                      getattr(args, 'model_out', None))
+                    if _mp:
+                        atomic_torch_save(trainer.policy_value_net, _mp)
 
             # 5) 工兵死了就重启（不是我们要停的情况下）
             for wid, p in list(procs.items()):
@@ -394,7 +420,10 @@ def main():
     atomic_torch_save(trainer.policy_value_net,
                       os.path.join(args.ckpt_dir,
                                    'ckpt_it%d.model' % trainer.game_batch_cur))
-    atomic_torch_save(trainer.policy_value_net, './current_policy.model')
+    _mp = mirror_path(args.ckpt_dir, 'current_policy.model',
+                      getattr(args, 'model_out', None))
+    if _mp:
+        atomic_torch_save(trainer.policy_value_net, _mp)
     open(stop_path, 'w').close()
 
     deadline = time.time() + 180

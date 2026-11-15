@@ -53,7 +53,7 @@ class TrainPipeline():
                  play_batch_size=1, epochs=5, batch_size=512,
                  pure_mcts_playout_num=1000, metrics_file=None,
                  batch_offset=0, init_lr_multiplier=1.0, ckpt_dir='checkpoints',
-                 warmup_min_buffer=2000, warmup_updates=10,
+                 warmup_min_buffer=2000, warmup_updates=10, model_out=None,
                  save_games=None, gate_step=200, gate_max=1200,
                  rapfi_bin=None, rapfi_depth=2, rapfi_every=0, rapfi_games=4,
                  rapfi_who='absolute', eval_pure=0, value_target='z',
@@ -160,6 +160,10 @@ class TrainPipeline():
         self.warmup_updates = int(warmup_updates)
         self._n_update = 0
         self._warmup_warned = False
+        # current_policy / best_policy 这两份「覆盖写」权重的输出目录。
+        # None = 自动：生产 ckpt_dir=checkpoints 时仍写项目根（历史路径不变），
+        # 其他目录（测试）写进该目录，绝不覆盖看板/探针在读的项目根权重。
+        self.model_out = model_out
         if init_model:
             # start training from an initial policy-value net
             self.policy_value_net = PolicyValueNet(self.board_width,
@@ -424,6 +428,34 @@ class TrainPipeline():
             out.extend(random.sample(self.data_buffer, self.batch_size - len(out)))
         return out
 
+    def _mirror_path(self, name):
+        """current_policy.model / best_policy.model 的落盘路径。
+
+        🚨 这两份是「覆盖写」的活权重，web/engine.py 与一堆探针都按项目根的固定
+        路径去读。所以绝不能无条件写 './'：用 `--ckpt_dir /tmp/xxx` 跑一次测试，
+        就会把看板正在用的权重悄悄换成测试网络的，且没有任何报错。
+
+        规则（默认行为与历史完全一致）：
+          model_out='none'            → 返回 None（不写镜像）
+          model_out 指定目录           → 写进该目录
+          ckpt_dir 是 checkpoints/…    → 写项目根（生产老路径，不变）
+          ckpt_dir 是别的目录（测试）   → 写进 ckpt_dir，不污染项目根
+          ckpt_dir 为空                → 返回 None
+        """
+        mo = (self.model_out or '').strip()
+        if mo.lower() == 'none':
+            return None
+        if mo:
+            os.makedirs(mo, exist_ok=True)
+            return os.path.join(mo, name)
+        ck = (self.ckpt_dir or '').strip()
+        if not ck:
+            return None
+        if os.path.basename(os.path.normpath(ck)) != 'checkpoints':
+            os.makedirs(ck, exist_ok=True)
+            return os.path.join(ck, name)
+        return name
+
     def policy_update(self):
         """update the policy-value net（含续训 warmup）"""
         # ① buffer 太小就跳过：早期对着 4~6 局数据跑 5 epoch 会把权重推歪
@@ -605,7 +637,9 @@ class TrainPipeline():
                 # ── 存档（每 check_freq 局）─────────────────────────
                 # 先存再评估：评估崩了也不该丢权重。
                 if self.game_batch_cur % self.check_freq == 0:
-                    self.policy_value_net.save_model('./current_policy.model')
+                    _mp = self._mirror_path('current_policy.model')
+                    if _mp:
+                        self.policy_value_net.save_model(_mp)
                     # immutable per-iteration archive so a corrupted/overwritten
                     # current_policy.model never costs more than check_freq games
                     if self.ckpt_dir:
@@ -625,7 +659,9 @@ class TrainPipeline():
                         print("New best policy!!!!!!!!")
                         self.best_win_ratio = win_ratio
                         # update the best_policy
-                        self.policy_value_net.save_model('./best_policy.model')
+                        _bp = self._mirror_path('best_policy.model')
+                        if _bp:
+                            self.policy_value_net.save_model(_bp)
                         if (self.best_win_ratio == 1.0 and
                                 self.pure_mcts_playout_num + self.gate_step <= self.gate_max):
                             self.pure_mcts_playout_num += self.gate_step
@@ -668,6 +704,11 @@ if __name__ == '__main__':
                         help='restore the adaptive lr multiplier when resuming')
     parser.add_argument('--ckpt_dir', type=str, default='checkpoints',
                         help='archive ckpt_itN.model here (empty string disables)')
+    parser.add_argument('--model_out', type=str, default=None,
+                        help='current_policy/best_policy 的输出目录。默认自动：'
+                             'ckpt_dir 是 checkpoints 时写项目根（历史行为），'
+                             '其他目录（测试）写进 ckpt_dir，避免覆盖看板在用权重；'
+                             '传 none 则完全不写这两份镜像')
     parser.add_argument('--metrics_file', type=str, default='logs/metrics.jsonl')
     parser.add_argument('--save-games', dest='save_games', type=str, default='',
                         help='把每局手顺追加写入该 jsonl（默认关闭）')
@@ -723,6 +764,7 @@ if __name__ == '__main__':
                                       batch_offset=args.batch_offset,
                                       init_lr_multiplier=args.init_lr_multiplier,
                                       ckpt_dir=args.ckpt_dir,
+                                      model_out=args.model_out,
                                       dirichlet_eps=args.dirichlet_eps,
                                       dirichlet_alpha=args.dirichlet_alpha,
                                       temp_switch=args.temp_switch,
