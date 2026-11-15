@@ -42,3 +42,12 @@ Thumbs.db
 gomoku_checkpoints/worker_data/
 gomoku_checkpoints/replay_pool_index.json
 gomoku_checkpoints/*.pt
+
+# ── ★ 2026-11-15 v4 结项: 只放行 weights/ 下这两份随附权重 ──
+#   （*.model 仍全局忽略；checkpoints/ 与根目录 current_policy.model 一律不入库）
+!weights/
+weights/*.model
+!weights/ckpt_it16946.model
+!weights/ckpt_it15853.model
+web_flask/v4_combat_cache.json
+eval_*.bak*
